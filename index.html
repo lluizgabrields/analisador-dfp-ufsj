@@ -123,17 +123,21 @@ table.ibge tbody tr:last-child td,table.ibge tbody tr:last-child th{border-botto
 table.ibge th,table.ibge td{padding:5px 9px;text-align:right;white-space:nowrap;border:0}
 table.ibge th{font-weight:600;font-size:12.5px;color:var(--ink)}
 table.ibge thead th.grp{border-bottom:1px solid var(--rule)}
-table.ibge th:first-child,table.ibge td:first-child{text-align:left;position:sticky;left:0;background:var(--paper);z-index:1}
-.panel table.ibge th:first-child,.panel table.ibge td:first-child{background:var(--surface)}
+table.ibge thead tr:first-child th:first-child,table.ibge tbody td:first-child{text-align:left;position:sticky;left:0;background:var(--paper);z-index:1}
+.panel table.ibge thead tr:first-child th:first-child,.panel table.ibge tbody td:first-child{background:var(--surface)}
 table.ibge td.l{text-align:left;white-space:normal}
 table.ibge tr.lv0 td{font-weight:700}
 table.ibge tr.lv1 td{font-weight:600}
 table.ibge tr.lv2 td:first-child{padding-left:20px;font-weight:600;color:var(--ink2)}
 table.ibge tr.lv3 td:first-child{padding-left:30px}
 table.ibge tr.lv3 td{color:var(--ink2)}
-table.ibge tr.lv0 td,table.ibge tr.lv1 td{background:transparent}
 table.ibge td.sep,table.ibge th.sep{padding-left:18px}
 table.ibge tbody tr:hover td{background:var(--sunk)}
+table.ibge tbody tr:hover td:first-child{background:var(--sunk)}
+table.ibge thead tr:first-child th:first-child,table.ibge tbody td:first-child{box-shadow:inset -1px 0 0 var(--rule)}
+table.ibge th:first-child,table.ibge td:first-child{text-align:left}
+table.ibge thead tr+tr th:first-child{text-align:right}
+.tw{position:relative}
 table.ibge tbody tr.pick{cursor:pointer}
 table.ibge .neg{color:var(--neg)}
 table.ibge .warnv{color:var(--ochre)}
