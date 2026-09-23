@@ -615,7 +615,7 @@ function renderPainel() {
     <div class="panel"><h3>Retornos ao longo do tempo</h3><p class="muted" style="margin:0 0 8px;font-size:13px">% ao ano</p>${lineChart({ labels: YEARS, series: ['ROE', 'ROA', 'RSV'].map((k, i) => ({ name: k, values: YEARS.map(yy => ind(c, yy, k)) })), fmt: v => NF1.format(v) + '%', zero: true })}</div>
   </div>
   <h2>Por onde continuar</h2>
-  <p class="lede">As abas acima detalham o Balanço e a DRE padronizados (com AV e AH), os índices por grupo, a ficha da companhia com diagnóstico, a comparação com outras empresas e os rankings setoriais. Na aba Quiz, o sistema gera perguntas sobre esta companhia para você treinar a interpretação.</p>`;
+  <p class="lede">As abas acima detalham o Balanço e a DRE padronizados (com AV e AH), os índices por grupo, a ficha da companhia, o panorama com plano de ação, a comparação com outras empresas e os rankings setoriais. Na aba Quiz, o sistema gera perguntas sobre esta companhia para você treinar a interpretação.</p>`;
 }
 
 /* ===== Balanço ===== */
@@ -796,6 +796,189 @@ function renderRankings() {
   $$('tr[data-go]', el).forEach(tr => tr.onclick = () => { selectCo(+tr.dataset.go); go('painel'); });
 }
 
+/* ===== Panorama personalizado: diagnóstico prescritivo ===== */
+const PLAY = {
+  LC: { contas: 'Estoques (1.01.04), Contas a receber (1.01.03), Fornecedores (2.01.02), Empréstimos e financiamentos de curto prazo (2.01.04)',
+    causas: ['estoques e recebíveis crescendo mais rápido que as vendas', 'concentração de vencimentos de dívida no passivo circulante', 'consumo de caixa por prejuízo operacional ou por investimento financiado no curto prazo'],
+    cp: ['Negociar com os bancos a troca de dívida de curto por longo prazo (2.01.04 → 2.02.01): cada real migrado melhora a liquidez corrente e a composição do endividamento ao mesmo tempo.', 'Acelerar a conversão dos recebíveis (1.01.03): régua de cobrança, desconto para pagamento à vista e antecipação seletiva de duplicatas.', 'Ajustar compras ao ritmo de vendas e liquidar itens de estoque de baixo giro (1.01.04), transformando estoque em caixa.'],
+    lp: ['Casar o perfil de financiamento com o ciclo do negócio: ativos permanentes financiados por recursos de longo prazo e capital próprio.', 'Formar uma reserva mínima de caixa e aplicações (1.01.01 e 1.01.02) equivalente a alguns meses de compromissos.', 'Rever a política de crédito e de estoques com metas de prazo médio, monitoradas mês a mês.'] },
+  LS: { contas: 'Disponível (1.01.01), Aplicações financeiras (1.01.02), Contas a receber (1.01.03), Passivo circulante (2.01)',
+    causas: ['liquidez concentrada em estoques, que dependem de vender para virar caixa', 'caixa baixo diante das obrigações do próximo exercício', 'alongamento do prazo de recebimento dos clientes'],
+    cp: ['Reduzir a dependência dos estoques na cobertura do passivo circulante, priorizando a venda dos itens parados.', 'Converter recebíveis em caixa e concentrar as sobras em aplicações de liquidez imediata (1.01.02).', 'Escalonar os vencimentos do passivo circulante para meses de maior entrada de caixa.'],
+    lp: ['Estabelecer uma política de caixa mínimo e revisá-la quando o ciclo financeiro mudar.', 'Diversificar linhas de crédito pré-aprovadas para não depender de estoque na emergência.'] },
+  LG: { contas: 'Ativo circulante (1.01), Realizável a longo prazo (1.02.01), Passivo circulante (2.01), Passivo não circulante (2.02)',
+    causas: ['dívida total crescendo mais rápido que os direitos realizáveis', 'investimento pesado no permanente financiado por dívida', 'prejuízos acumulados corroendo o capital próprio'],
+    cp: ['Amortizar dívidas com o caixa excedente, começando pelas linhas mais caras.', 'Rever o cronograma de investimentos para não ampliar o endividamento enquanto a liquidez estiver apertada.'],
+    lp: ['Financiar a expansão com capital próprio ou geração de caixa, reduzindo a alavancagem estrutural.', 'Desmobilizar ativos não operacionais (1.02.02 e 1.02.03) e usar o produto na quitação de dívidas.'] },
+  ICJ: { contas: 'Lucro operacional/Lajir (3.05), Despesas financeiras (3.06.02), Empréstimos e financiamentos (2.01.04 e 2.02.01)',
+    causas: ['volume de dívida onerosa alto para o nível de lucro operacional', 'custo de captação elevado', 'queda do resultado operacional por margem ou por volume'],
+    cp: ['Renegociar taxas e alongar prazos das linhas mais caras; substituir capital de giro caro por linhas com garantia real.', 'Amortizar antecipadamente dívidas de maior custo com recebimentos ou venda de ativos ociosos.', 'Proteger o resultado operacional cortando despesas fixas não essenciais (3.04.01 e 3.04.02).'],
+    lp: ['Definir um teto de alavancagem compatível com o Lajir recorrente e respeitá-lo na política de investimento.', 'Buscar fontes de funding mais baratas (mercado de capitais, linhas de fomento) conforme o porte permitir.'] },
+  PCT: { contas: 'Passivo circulante (2.01), Passivo não circulante (2.02), Patrimônio líquido (2.03), Reservas de lucros (2.03.04)',
+    causas: ['crescimento financiado majoritariamente por dívida', 'distribuição de lucros acima da capacidade de geração de caixa', 'prejuízos reduzindo o patrimônio líquido'],
+    cp: ['Reter lucros do exercício em reservas (2.03.04) em vez de distribuir, reforçando o capital próprio.', 'Suspender captações novas que não estejam ligadas a projetos com retorno acima do custo da dívida.'],
+    lp: ['Avaliar aumento de capital (2.03.01) ou entrada de sócio investidor se a alavancagem travar o crescimento.', 'Manter a dívida apenas enquanto o retorno do ativo superar o custo de captação, que é a condição do trade-off entre alavancagem e risco.'] },
+  CE: { contas: 'Empréstimos de curto prazo (2.01.04), Empréstimos de longo prazo (2.02.01), Fornecedores (2.01.02), Outras obrigações (2.02.02 a 2.02.06)',
+    causas: ['concentração de vencimentos no próximo exercício', 'uso de capital de giro de curto prazo para financiar investimento de longo prazo', 'perda de acesso a linhas longas'],
+    cp: ['Trocar dívida de curto por longo prazo, distribuindo os vencimentos ao longo dos anos seguintes.', 'Negociar com fornecedores prazos compatíveis com o ciclo de caixa, sem perder desconto financeiro relevante.'],
+    lp: ['Adotar uma política formal de perfil da dívida, com limite máximo de vencimentos concentrados em doze meses.', 'Lembrar que adiar dívida não resolve solvência: o alongamento precisa vir junto com geração de caixa.'] },
+  EFSAT: { contas: 'Empréstimos e financiamentos (2.01.04 e 2.02.01), Ativo total (1), Imobilizado (1.02.03)',
+    causas: ['ativo financiado predominantemente por dívida bancária', 'aquisições e investimentos custeados com dívida onerosa', 'baixa geração interna de caixa'],
+    cp: ['Amortizar dívida onerosa com o caixa excedente e com a venda de ativos não operacionais.', 'Substituir dívida cara por linhas subsidiadas ou por crédito de fornecedor, quando houver.'],
+    lp: ['Aumentar a participação do capital próprio e da geração de caixa no financiamento do ativo.', 'Avaliar arrendamento em vez de compra para ativos de uso intermitente, reduzindo a necessidade de dívida.'] },
+  IPL: { contas: 'Investimentos (1.02.02), Imobilizado (1.02.03), Intangível (1.02.04), Patrimônio líquido (2.03)',
+    causas: ['expansão de imobilizado e intangível acima do que o capital próprio suporta', 'capital próprio reduzido por prejuízos ou por distribuição de lucros', 'aquisições com ágio elevado registrado no intangível'],
+    cp: ['Adiar investimentos não essenciais em imobilizado enquanto o capital de giro estiver pressionado.', 'Reter lucros para reforçar o PL e reduzir a imobilização relativa.'],
+    lp: ['Financiar o permanente com recursos de longo prazo, preservando capital próprio para o giro.', 'Revisar o portfólio de ativos: vender o que não gera retorno e concentrar capital no núcleo do negócio.'] },
+  RSV: { contas: 'Receita líquida (3.01), CPV (3.02), Despesas com vendas (3.04.01), Despesas gerais e administrativas (3.04.02), Despesas financeiras (3.06.02)',
+    causas: ['custo dos produtos vendidos subindo mais que os preços', 'despesas operacionais crescendo acima da receita', 'resultado financeiro negativo consumindo o lucro operacional'],
+    cp: ['Revisar preços e mix de produtos, priorizando linhas de maior margem bruta (3.03).', 'Atacar as despesas que mais cresceram na Análise Horizontal, começando pelas administrativas (3.04.02).', 'Reduzir o custo da dívida para diminuir a despesa financeira (3.06.02) que corta o lucro.'],
+    lp: ['Ganhar escala e diluir custos fixos, investindo em produtividade e tecnologia.', 'Reposicionar o portfólio para produtos e serviços menos sensíveis à concorrência por preço.'] },
+  GA: { contas: 'Receita líquida (3.01), Ativo total (1), Imobilizado (1.02.03), Estoques (1.01.04), Contas a receber (1.01.03)',
+    causas: ['ativo crescendo mais rápido que as vendas', 'capacidade instalada ociosa', 'capital empatado em estoques e recebíveis'],
+    cp: ['Elevar a ocupação da capacidade instalada antes de novos investimentos em imobilizado.', 'Liberar capital de giro parado em estoques e recebíveis, o que reduz o ativo sem afetar a operação.'],
+    lp: ['Desmobilizar ou arrendar ativos subutilizados.', 'Crescer receita por canais que exigem pouco ativo, como serviços e parcerias.'] },
+  ROA: { contas: 'Resultado líquido (3.11), Ativo total (1), Receita líquida (3.01)',
+    causas: ['margem líquida baixa', 'giro do ativo baixo', 'ativo inflado por itens que não geram receita'],
+    cp: ['Trabalhar a alavanca mais fraca da decomposição Du Pont (giro ou margem), apontada na síntese acima.', 'Cortar ativos improdutivos, o que melhora o retorno sem depender de aumento de vendas.'],
+    lp: ['Definir retorno mínimo exigido para novos projetos, acima do custo de capital.', 'Acompanhar o ROA junto da regra 72 ÷ ROA, que mostra em quantos anos o ativo dobraria no ritmo atual.'] },
+  ROE: { contas: 'Resultado líquido (3.11), Patrimônio líquido (2.03), Empréstimos e financiamentos (2.01.04 e 2.02.01)',
+    causas: ['lucro insuficiente para remunerar o capital próprio', 'patrimônio líquido elevado e pouco produtivo', 'custo da dívida acima do retorno do ativo, invertendo a alavancagem a favor dos credores'],
+    cp: ['Melhorar o resultado líquido pelas alavancas de margem e de custo financeiro.', 'Rever a política de dividendos e de recompra à luz do retorno que o capital próprio está obtendo.'],
+    lp: ['Manter o ROE acima do custo de oportunidade dos sócios, comparando com outras aplicações.', 'Usar alavancagem apenas quando o ROA superar o custo da dívida, que é o que faz o ROE ficar acima do ROA.'] },
+  PMRE: { contas: 'Estoques (1.01.04), CPV (3.02), Fornecedores (2.01.02)',
+    causas: ['compras descasadas da demanda', 'itens obsoletos ou de baixo giro', 'lotes de compra grandes em busca de desconto'],
+    cp: ['Classificar o estoque por giro e liquidar a cauda de itens parados.', 'Revisar pontos de pedido e lotes mínimos com os principais fornecedores.'],
+    lp: ['Implantar planejamento de demanda e reposição contínua.', 'Reduzir a variedade de itens de baixa saída no portfólio.'] },
+  PMRV: { contas: 'Contas a receber (1.01.03), Receita líquida (3.01)',
+    causas: ['prazos concedidos acima da prática do setor', 'inadimplência e atrasos na cobrança', 'concentração de vendas em clientes que pagam tarde'],
+    cp: ['Revisar a política de crédito por faixa de cliente e reforçar a régua de cobrança.', 'Oferecer desconto financeiro para antecipação, comparando o custo com a taxa de capital de giro.'],
+    lp: ['Segmentar clientes por risco e rentabilidade, ajustando limites e prazos.', 'Usar instrumentos de recebíveis (securitização, antecipação estruturada) de forma planejada, não emergencial.'] },
+  PMPC: { contas: 'Fornecedores (2.01.02), CPV (3.02), Estoques (1.01.04)',
+    causas: ['prazo de pagamento curto diante do ciclo de venda', 'poder de negociação baixo com fornecedores', 'pagamento antecipado em busca de desconto'],
+    cp: ['Renegociar prazos com os maiores fornecedores, comparando o desconto oferecido com o custo do capital de giro.', 'Padronizar as condições de compra, evitando pagamentos antecipados sem ganho claro.'],
+    lp: ['Construir relações de longo prazo com fornecedores estratégicos, trocando volume por prazo.', 'Integrar a política de compras ao planejamento de caixa.'] },
+  CF: { contas: 'Estoques (1.01.04), Contas a receber (1.01.03), Fornecedores (2.01.02), Empréstimos de curto prazo (2.01.04)',
+    causas: ['estoques e recebíveis longos frente ao prazo dos fornecedores', 'crescimento de vendas sem financiamento do giro', 'sazonalidade mal planejada'],
+    cp: ['Atacar os três prazos ao mesmo tempo: girar estoque, receber mais rápido e pagar no prazo negociado.', 'Dimensionar a necessidade de capital de giro antes de acelerar as vendas.'],
+    lp: ['Buscar um ciclo financeiro estruturalmente menor, que libera caixa e reduz a dependência de dívida.', 'Revisar o ciclo a cada mudança relevante de mix, canal ou sazonalidade.'] }
+};
+const PESO = { LC: 3, LS: 2, LG: 2, ICJ: 3, PCT: 3, CE: 2, EFSAT: 2, IPL: 1, RSV: 3, GA: 2, ROA: 3, ROE: 2, PMRE: 1, PMRV: 1, PMPC: 1, CF: 2 };
+const SIT = { 3: ['Crítico', 'neg'], 2: ['Atenção', 'ochre'], 1: ['Adequado', 'neu'], 0: ['Forte', 'pos'] };
+
+function peersOf(c, y) {
+  let p = CO.filter(o => o.s === c.s && has(o, y) && !!o.f === !!c.f && o.i !== c.i);
+  if (p.length < 5) { p = CO.filter(o => has(o, y) && !!o.f === !!c.f && o.i !== c.i); return { list: p, amplo: true }; }
+  return { list: p, amplo: false };
+}
+function assess(c, y, k, peers) {
+  const v = ind(c, y, k); if (v == null || !isFinite(v)) return null;
+  const arr = peers.map(o => ind(o, y, k)).filter(x => x != null && isFinite(x));
+  if (arr.length < 4) return null;
+  const dir = INDK[k].dir, med = median(arr), q1 = quant(arr, .25), q3 = quant(arr, .75);
+  let sev; // 3 pior, 0 melhor
+  if (dir > 0) sev = v < q1 ? 3 : v < med ? 2 : v < q3 ? 1 : 0; else sev = v > q3 ? 3 : v > med ? 2 : v > q1 ? 1 : 0;
+  const t = trend(k, v, ind(c, prevY(y), k));
+  const pctl = pctRank(k, c, y, [c, ...peers]);
+  const score = sev * PESO[k] + (t.s === 'down' ? PESO[k] * 0.6 : t.s === 'up' ? -PESO[k] * 0.3 : 0);
+  return { k, v, med, q1, q3, sev, t, pctl, score, alvo: med };
+}
+function fmtR(v) { return 'R$ ' + fmtBig(Math.abs(v)); }
+function metas(c, y, k, alvo) { // o que precisa mudar para alcançar a mediana do setor
+  const g = f => V(c, y, f) ?? 0; const r = calc(c, y); const out = [];
+  const AC = g('AC'), PC = g('PC'), PNC = g('PNC'), PL = g('PL'), AT = g('AT'), RL = g('RL'), LL = g('LL'), debt = PC + PNC;
+  const seco = g('DISP') + g('APLIC') + g('CREC'), PF = g('EMPPC') + g('EMPPNC'), AP = g('INV') + g('IMOB') + g('INTANG');
+  const pos = x => x > 0 ? x : null;
+  if (k === 'LC') { out.push(['Reduzir o passivo circulante', pos(PC - AC / alvo), PC], ['ou ampliar o ativo circulante', pos(alvo * PC - AC), AC]); }
+  if (k === 'LS') { out.push(['Ampliar caixa, aplicações e recebíveis', pos(alvo * PC - seco), seco], ['ou reduzir o passivo circulante', pos(PC - seco / alvo), PC]); }
+  if (k === 'LG') { out.push(['Reduzir a dívida total', pos(debt - (AC + g('RLP')) / alvo), debt], ['ou ampliar os realizáveis', pos(alvo * debt - AC - g('RLP')), AC + g('RLP')]); }
+  if (k === 'ICJ') { out.push(['Elevar o Lajir', pos(alvo * Math.abs(g('DESFIN')) - g('LOP1')), Math.abs(g('LOP1')) * 2], ['ou reduzir as despesas financeiras do ano', pos(Math.abs(g('DESFIN')) - g('LOP1') / alvo), Math.abs(g('DESFIN'))]); }
+  if (k === 'PCT') { out.push(['Reduzir o capital de terceiros', pos(debt - alvo / 100 * PL), debt], ['ou reforçar o patrimônio líquido', pos(debt / (alvo / 100) - PL), PL]); }
+  if (k === 'CE') { out.push(['Migrar do passivo circulante para o não circulante', pos(PC - alvo / 100 * debt), PC]); }
+  if (k === 'EFSAT') { out.push(['Amortizar dívida onerosa', pos(PF - alvo / 100 * AT), PF]); }
+  if (k === 'IPL') { out.push(['Reforçar o patrimônio líquido', pos(AP / (alvo / 100) - PL), PL], ['ou reduzir o ativo permanente', pos(AP - alvo / 100 * PL), AP]); }
+  if (k === 'RSV') { out.push(['Elevar o resultado líquido', pos(alvo / 100 * RL - LL), Math.abs(RL) * 0.5]); }
+  if (k === 'ROA') { out.push(['Elevar o resultado líquido', pos(alvo / 100 * r.ATm - LL), Math.abs(RL) * 0.5], ['ou reduzir o ativo improdutivo', pos(AT - LL / (alvo / 100)), AT]); }
+  if (k === 'ROE') { out.push(['Elevar o resultado líquido', pos(alvo / 100 * r.PLma - LL), Math.abs(RL) * 0.5]); }
+  if (k === 'GA') { out.push(['Ampliar a receita líquida', pos(alvo * r.ATm - RL), RL], ['ou reduzir o ativo médio', pos(r.ATm - RL / alvo), r.ATm]); }
+  if (k === 'PMRE' && r.PMRE != null) { const d = r.PMRE - alvo; out.push([`Reduzir ${NF0.format(Math.max(0, d))} dias de estoque libera`, pos(Math.max(0, d) * Math.abs(g('CPV')) / 365)]); }
+  if (k === 'PMRV' && r.PMRV != null) { const d = r.PMRV - alvo; out.push([`Reduzir ${NF0.format(Math.max(0, d))} dias de recebimento libera`, pos(Math.max(0, d) * RL / 365)]); }
+  if (k === 'PMPC' && r.PMPC != null) { const d = alvo - r.PMPC; out.push([`Alongar ${NF0.format(Math.max(0, d))} dias o pagamento libera`, pos(Math.max(0, d) * Math.abs(g('CPV')) * 0.62 / 365)]); }
+  if (k === 'CF' && r.CF != null) { const d = r.CF - alvo; out.push([`Encurtar ${NF0.format(Math.max(0, d))} dias de ciclo financeiro libera`, pos(Math.max(0, d) * RL / 365)]); }
+  const ok = out.filter(o => o[1] != null && (o[2] == null || o[1] <= o[2] * 0.5));
+  return ok.length ? ok : out.filter(o => o[1] != null).slice(0, 1);
+}
+function drivers(c, y, k) { // rubricas que mais variaram e que afetam o índice
+  const map = { LC: ['EST', 'CREC', 'DISP', 'APLIC', 'FORN', 'EMPPC', 'OUTPC'], LS: ['DISP', 'APLIC', 'CREC', 'EMPPC', 'FORN'], LG: ['AC', 'RLP', 'PC', 'PNC'], ICJ: ['LOP1', 'DESFIN', 'EMPPC', 'EMPPNC'], PCT: ['PC', 'PNC', 'PL'], CE: ['EMPPC', 'EMPPNC', 'FORN', 'OUTPNC'], EFSAT: ['EMPPC', 'EMPPNC', 'AT'], IPL: ['IMOB', 'INTANG', 'INV', 'PL'], RSV: ['RL', 'CPV', 'DVEND', 'DADM', 'DESFIN', 'IRCS'], GA: ['RL', 'AT', 'IMOB', 'EST', 'CREC'], ROA: ['LL', 'RL', 'AT'], ROE: ['LL', 'PL'], PMRE: ['EST', 'CPV'], PMRV: ['CREC', 'RL'], PMPC: ['FORN', 'CPV'], CF: ['EST', 'CREC', 'FORN'] }[k] || [];
+  const p = prevY(y); if (!has(c, p)) return [];
+  const NOME = { EST: 'Estoques', CREC: 'Contas a receber', DISP: 'Disponível', APLIC: 'Aplicações financeiras', FORN: 'Fornecedores', EMPPC: 'Empréstimos de curto prazo', EMPPNC: 'Empréstimos de longo prazo', OUTPC: 'Outras obrigações de curto prazo', OUTPNC: 'Outras obrigações de longo prazo', AC: 'Ativo circulante', RLP: 'Realizável a longo prazo', PC: 'Passivo circulante', PNC: 'Passivo não circulante', PL: 'Patrimônio líquido', LOP1: 'Lucro operacional (Lajir)', DESFIN: 'Despesas financeiras', IMOB: 'Imobilizado', INTANG: 'Intangível', INV: 'Investimentos', RL: 'Receita líquida', CPV: 'CPV', DVEND: 'Despesas com vendas', DADM: 'Despesas gerais e administrativas', IRCS: 'IR e CSLL', AT: 'Ativo total', LL: 'Resultado líquido' };
+  return map.map(f => { const a = V(c, y, f), b = V(c, p, f); if (!b || a == null) return null; return { n: NOME[f], ah: Math.abs(a) / Math.abs(b) * 100, a, b }; })
+    .filter(x => x && Math.abs(x.ah - 100) >= 8).sort((x, z) => Math.abs(z.ah - 100) - Math.abs(x.ah - 100)).slice(0, 4);
+}
+function renderPanorama() {
+  const c = cur(); const y = effYear(c); const p = prevY(y); const el = $('#v-panorama');
+  const pe = peersOf(c, y); const A = [...MAIN, 'PMRE', 'PMRV', 'PMPC', 'CF'].map(k => assess(c, y, k, pe.list)).filter(Boolean);
+  if (!A.length) { el.innerHTML = `<h1>Panorama</h1><div class="empty-state">Não há dados suficientes para montar o panorama de ${esc(c.n)} em ${y}.</div>`; return; }
+  const ord = [...A].sort((a, b) => b.score - a.score);
+  const foco = ord.filter(x => x.sev >= 2).slice(0, 5);
+  const fortes = [...A].filter(x => x.sev === 0).sort((a, b) => (b.pctl ?? 0) - (a.pctl ?? 0)).slice(0, 4);
+  const r = calc(c, y);
+  const gaP = A.find(x => x.k === 'GA'), rsvP = A.find(x => x.k === 'RSV');
+  let dupont = '';
+  if (gaP && rsvP) { const fraco = gaP.sev > rsvP.sev ? 'giro' : rsvP.sev > gaP.sev ? 'margem' : (gaP.pctl ?? 50) < (rsvP.pctl ?? 50) ? 'giro' : 'margem';
+    dupont = `<p>Na decomposição Du Pont, o ROA de ${fmtInd('ROA', r.ROA)} vem de giro ${NF2.format(r.GA)} (mediana do setor: ${NF2.format(gaP.med)}) e margem ${fmtInd('RSV', r.RSV)} (mediana: ${fmtInd('RSV', rsvP.med)}). A alavanca mais fraca é <b>${fraco === 'giro' ? 'o giro do ativo' : 'a margem líquida'}</b>, ${fraco === 'giro' ? 'ou seja, a companhia vende pouco para o tamanho do ativo que carrega: o caminho mais curto passa por ocupar capacidade e liberar capital parado em estoques e recebíveis.' : 'ou seja, a companhia vende bem para o seu tamanho, mas sobra pouco de cada venda: o caminho mais curto passa por preço, mix, custo e despesa financeira.'}</p>`; }
+
+  let h = `<h1>Panorama</h1><p class="lede">Leitura de analista sobre ${esc(c.n)} no exercício ${y}: o que precisa melhorar, por que, quais contas trabalhar e o que fazer no curto e no longo prazo. A referência é a mediana ${pe.amplo ? 'das companhias do mesmo tipo na base' : 'do setor ' + esc(c.s)} (${pe.list.length} companhias).</p>`;
+
+  // Semáforo
+  h += `<div class="tw"><table class="ibge"><caption>Tabela 13 – Diagnóstico por índice em relação ao setor — ${esc(c.n)}, ${y}</caption><thead><tr><th style="text-align:left">Índice</th><th>Companhia</th><th>Mediana do setor</th><th>Q1</th><th>Q3</th><th>Percentil</th><th style="text-align:left">${p}→${y}</th><th style="text-align:left">Situação</th></tr></thead><tbody>`;
+  A.forEach(x => { const [lab, cor] = SIT[x.sev]; h += `<tr><td class="l">${INDK[x.k].n} (${x.k})</td><td>${fmtInd(x.k, x.v)}</td><td>${fmtInd(x.k, x.med)}</td><td>${fmtInd(x.k, x.q1)}</td><td>${fmtInd(x.k, x.q3)}</td><td>${x.pctl ?? '—'}</td><td class="l ${x.t.s === 'na' ? '' : x.t.s}">${x.t.s === 'na' ? '—' : x.t.t}</td><td class="l"><span class="pill ${cor === 'neg' ? 'down' : cor === 'pos' ? 'up' : 'flat'}">${lab}</span></td></tr>`; });
+  h += `</tbody></table></div>` + srcBlock(['Situação definida pela posição no setor: abaixo do primeiro quartil (ou acima, nos índices do tipo “quanto maior, pior”) é crítico; entre o quartil e a mediana é atenção; acima da mediana é adequado; acima do terceiro quartil é forte.', pe.amplo ? 'O setor tinha menos de cinco companhias comparáveis, por isso a referência usada foi o conjunto de companhias do mesmo tipo na base.' : 'Comparação apenas com companhias do mesmo setor e do mesmo tipo.']);
+
+  // Síntese
+  h += `<h2>Síntese</h2><div class="panel diag">`;
+  if (foco.length) h += `<p>As prioridades de ${y} são <b>${foco.map(x => INDK[x.k].n + ' (' + x.k + ')').join(', ')}</b>. ${foco.filter(x => x.t.s === 'down').length ? 'Parte delas vem piorando frente a ' + p + ', o que reforça a urgência.' : 'A comparação com ' + p + ' não mostra deterioração generalizada, o que dá tempo para agir de forma planejada.'}</p>`;
+  else h += `<p>Nenhum índice ficou abaixo da mediana do setor de forma relevante: a companhia está, em ${y}, em posição confortável frente aos pares. O foco passa a ser preservar o desempenho e vigiar os índices que pioraram frente a ${p}.</p>`;
+  h += dupont;
+  if (r.CF != null) h += `<p>O ciclo financeiro é de ${NF0.format(r.CF)} dias${r.CF < 0 ? ', ou seja, os fornecedores financiam o estoque e as vendas a prazo — uma vantagem a preservar.' : `, o que equivale a ${fmtR(r.CF * V(c, y, 'RL') / 365)} de capital de giro imobilizado na operação. Cada dia cortado libera cerca de ${fmtR(V(c, y, 'RL') / 365)}.`}</p>`;
+  if (V(c, y, 'PL') < 0) h += `<p><b>Alerta:</b> o patrimônio líquido é negativo (passivo a descoberto). Antes de qualquer meta de rentabilidade, o tema é reestruturação: renegociação de dívida, aporte de capital ou conversão de dívida em participação.</p>`;
+  if (c.f) h += `<p><b>Ressalva:</b> por ser instituição financeira ou seguradora, o plano de contas é próprio. Liquidez, giro, estoques e fornecedores não têm a mesma leitura, e as recomendações abaixo devem ser filtradas por esse contexto.</p>`;
+  h += `</div>`;
+
+  // Planos por índice
+  h += `<h2>Onde atuar</h2>`;
+  (foco.length ? foco : ord.slice(0, 3)).forEach((x, i) => {
+    const P = PLAY[x.k]; const m = metas(c, y, x.k, x.alvo); const dr = drivers(c, y, x.k);
+    h += `<div class="panel" style="margin:16px 0"><h3>${i + 1}. ${INDK[x.k].n} (${x.k}) — <span class="${x.sev >= 3 ? 'down' : x.sev === 2 ? 'flat' : 'up'}">${SIT[x.sev][0]}</span></h3>
+    <p class="muted" style="margin-top:0">${fmtInd(x.k, x.v)} contra mediana de ${fmtInd(x.k, x.med)} no setor · percentil ${x.pctl ?? '—'} · ${x.t.s === 'na' ? 'sem comparação com ' + p : x.t.t + ' frente a ' + p} · ${INDK[x.k].t.toLowerCase()}</p>
+    <p><b>O que o índice está dizendo.</b> ${INDK[x.k].d} ${explainTrend(x.k, c, y).replace(/<[^>]+>/g, '')}</p>
+    ${dr.length ? `<p><b>O que puxou o resultado.</b> Entre ${p} e ${y}, as rubricas ligadas a este índice que mais se moveram foram: ${dr.map(d => `${d.n} (AH ${NF1.format(d.ah)}, ${d.ah >= 100 ? '+' : '−'}${NF1.format(Math.abs(d.ah - 100))}%)`).join('; ')}.</p>` : ''}
+    <p><b>Causas usuais.</b> ${P.causas.join('; ')}.</p>
+    <p><b>Contas a trabalhar.</b> ${P.contas}.</p>
+    ${m.length ? `<p><b>Meta quantificada</b> — alcançar a mediana do setor (${fmtInd(x.k, x.alvo)}) exigiria, mantido o resto constante:</p><ul>${m.map(o => `<li>${o[0]}: <b>${fmtR(o[1])}</b>.</li>`).join('')}</ul>` : ''}
+    <p><b>Curto prazo (até 12 meses).</b></p><ul>${P.cp.map(s => `<li>${s}</li>`).join('')}</ul>
+    <p><b>Longo prazo (acima de 12 meses).</b></p><ul>${P.lp.map(s => `<li>${s}</li>`).join('')}</ul></div>`;
+  });
+
+  // Plano consolidado
+  const plano = (foco.length ? foco : ord.slice(0, 3));
+  h += `<h2>Plano de ação consolidado</h2><div class="tw"><table class="ibge"><caption>Tabela 14 – Plano de ação por prioridade — ${esc(c.n)}, ${y} <span class="unit">(valores em R$ mil, salvo indicação)</span></caption><thead><tr><th>Prioridade</th><th style="text-align:left">Índice</th><th style="text-align:left">Meta</th><th style="text-align:left">Movimento necessário</th><th style="text-align:left">Primeira ação</th><th style="text-align:left">Contas afetadas</th></tr></thead><tbody>`;
+  plano.forEach((x, i) => { const m = metas(c, y, x.k, x.alvo); h += `<tr><td>${i + 1}ª</td><td class="l">${INDK[x.k].n} (${x.k})</td><td class="l">${fmtInd(x.k, x.v)} → ${fmtInd(x.k, x.alvo)}</td><td class="l">${m.length ? m[0][0].toLowerCase() + ': ' + fmtR(m[0][1]) : '—'}</td><td class="l">${PLAY[x.k].cp[0]}</td><td class="l">${PLAY[x.k].contas}</td></tr>`; });
+  h += `</tbody></table></div>` + srcBlock(['Metas calculadas pela diferença entre o valor da companhia e a mediana do setor, mantidas constantes as demais contas. Servem para dimensionar o esforço, não como projeção.', 'Ações sugeridas a partir da interpretação de cada índice na metodologia da disciplina; a escolha depende do contexto da companhia.']);
+
+  // Fortes e riscos
+  h += `<h2>Pontos fortes a preservar</h2><div class="panel diag">`;
+  h += fortes.length ? `<ul>${fortes.map(x => `<li><b>${INDK[x.k].n} (${x.k})</b>: ${fmtInd(x.k, x.v)} contra mediana de ${fmtInd(x.k, x.med)}, no percentil ${x.pctl ?? '—'} do setor. ${INDK[x.k].i}</li>`).join('')}</ul>` : `<p>Nenhum índice ficou acima do terceiro quartil do setor em ${y}. Os menos pressionados são ${ord.slice(-2).map(x => INDK[x.k].n).join(' e ')}.</p>`;
+  h += `</div><h2>Riscos e ressalvas da leitura</h2><div class="panel diag"><ul>
+  <li>O diagnóstico compara a companhia com a mediana do setor no mesmo ano; setores inteiros podem estar pressionados, e ficar acima da mediana não significa estar confortável.</li>
+  <li>Índices são sintomas, não causas: antes de executar, confirme os números com as notas explicativas e com o fluxo de caixa, que a DFP padronizada não traz aqui.</li>
+  <li>As metas assumem tudo o mais constante. Na prática, as contas se movem juntas: reduzir estoque, por exemplo, mexe em CPV, fornecedores e liquidez ao mesmo tempo.</li>
+  <li>Prazos médios usam receita líquida no lugar da receita bruta e compras estimadas com redutor, então servem para tendência, não para valor exato.</li>
+  ${c.f ? '<li>Para instituições financeiras e seguradoras, liquidez, giro e prazos médios não se aplicam da mesma forma; use os índices de rentabilidade e estrutura com cautela.</li>' : ''}
+  </ul></div>`;
+  el.innerHTML = h;
+}
+
 /* ===== Estudar: quiz no estilo Kahoot ===== */
 const SHAPES = ['<svg viewBox="0 0 24 24"><path d="M12 3 22 20H2z" fill="#fff"/></svg>', '<svg viewBox="0 0 24 24"><path d="M12 2 22 12 12 22 2 12z" fill="#fff"/></svg>', '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="#fff"/></svg>', '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" fill="#fff"/></svg>'];
 const rnd = n => Math.floor(Math.random() * n);
@@ -931,8 +1114,8 @@ function renderMetodo() {
   const el = $('#v-metodo'); if (el.dataset.ok) return; el.dataset.ok = 1;
   const codeTable = (rows, n, t) => `<div class="tw"><table class="ibge codes"><caption>Quadro ${n} – ${t}</caption><thead><tr><th>Item da demonstração</th><th style="text-align:left">Código(s) das contas CVM</th></tr></thead><tbody>${rows.map(([l, , lv, cd]) => `<tr class="lv${lv}"><td>${esc(l)}</td><td class="l">${esc(cd || '(soma das rubricas abaixo)')}</td></tr>`).join('')}</tbody></table></div>`;
   el.innerHTML = `<div class="method"><h1>Como funciona</h1><p class="lede">Sistema de análise das demonstrações contábeis de companhias abertas, desenvolvido para a Atividade Avaliativa de Administração Financeira (DECAC/UFSJ) a partir da planilha “Analisador de Demonstrações Contábeis — CVM”.</p>
-  <h3>Como usar</h3><ol><li>Digite parte do nome ou do CNPJ no campo de busca do topo (ex.: <code>energia</code>, <code>banco</code>, <code>33.000.167</code>). A busca ignora acentos e maiúsculas e reconhece a abreviação BCO como “banco”.</li><li>Escolha o exercício em análise (2021 a 2025). Todas as abas se atualizam automaticamente: o sistema é reutilizável, basta trocar a companhia.</li><li>Navegue pelas abas: Painel, Balanço, DRE, Índices, Ficha, Comparar, Rankings e Quiz.</li></ol>
-  <h3>Fluxo do sistema</h3><p><b>Input:</b> arquivos DFP da CVM (BPA, BPP e DRE consolidados) e o nome da companhia. <b>Processamento:</b> filtragem pela companhia, padronização das contas pelos códigos CVM do Tópico 2 e cálculo dos índices. <b>Output:</b> AV e AH do balanço e da DRE; índices de estrutura de capital, liquidez e desempenho; comparações, rankings e questões de estudo.</p>
+  <h3>Como usar</h3><ol><li>Digite parte do nome ou do CNPJ no campo de busca do topo (ex.: <code>energia</code>, <code>banco</code>, <code>33.000.167</code>). A busca ignora acentos e maiúsculas e reconhece a abreviação BCO como “banco”.</li><li>Escolha o exercício em análise (2021 a 2025). Todas as abas se atualizam automaticamente: o sistema é reutilizável, basta trocar a companhia.</li><li>Navegue pelas abas: Painel, Balanço, DRE, Índices, Ficha, Panorama, Comparar, Rankings e Quiz.</li></ol>
+  <h3>Fluxo do sistema</h3><p><b>Input:</b> arquivos DFP da CVM (BPA, BPP e DRE consolidados) e o nome da companhia. <b>Processamento:</b> filtragem pela companhia, padronização das contas pelos códigos CVM do Tópico 2 e cálculo dos índices. <b>Output:</b> AV e AH do balanço e da DRE; índices de estrutura de capital, liquidez e desempenho; panorama com diagnóstico e plano de ação; comparações, rankings e questões de estudo.</p>
   <h3>Fonte e tratamento dos dados</h3><ul><li>CVM, Portal de Dados Abertos — Demonstrações Financeiras Padronizadas (DFP), arquivos <code>BPA_con</code>, <code>BPP_con</code> e <code>DRE_con</code> de 2021 a 2024, usando a coluna do exercício mais recente (ÚLTIMO) e a versão mais recente de cada documento.</li><li>Exercício de 2025: base tratada da planilha “Analisador de Demonstrações Contábeis — CVM” (DFP 2025).</li><li>Exercício de 2020: usado apenas como saldo inicial para médias (ATm, PLma, estoques, clientes e fornecedores médios) de 2021.</li><li>Valores convertidos para R$ mil. Companhias que declararam escala UNIDADE com ativo total inferior a R$ 5 milhões tiveram a escala ajustada para MIL, como na planilha original.</li><li>A base reúne ${CO.length} companhias. Setores: classificação setorial da B3 quando disponível; nos demais casos, inferência por palavras-chave da denominação (sinalizada na ficha).</li></ul>
   <h3>Padronização das demonstrações (Tópico 2, slides 6 a 8)</h3>${codeTable(ROWS_A, 2, 'Relação de contas do Ativo — códigos CVM')}${codeTable(ROWS_P, 3, 'Relação de contas do Passivo e PL — códigos CVM')}${codeTable(ROWS_D, 4, 'Relação de contas da DRE — códigos CVM')}
   <div class="src"><p>Fonte: Tópico 2 — Análise das Demonstrações Financeiras (Prof. Saulo Cardoso Maia, DECAC/UFSJ), adaptado ao plano de contas da CVM.</p><p>Nota: rubricas residuais (“Outros”, “Outras obrigações”, “Outras contas do PL”) são obtidas por diferença em relação ao subtotal, de modo que cada tabela fecha com o total.</p></div>
@@ -943,7 +1126,7 @@ function renderMetodo() {
 }
 
 /* ===== Navegação ===== */
-const TABS = [['painel', 'Painel', renderPainel], ['balanco', 'Balanço', renderBalanco], ['dre', 'DRE', renderDRE], ['indices', 'Índices', renderIndices], ['ficha', 'Ficha da companhia', renderFicha], ['comparar', 'Comparar', renderComparar], ['rankings', 'Rankings setoriais', renderRankings], ['estudar', 'Quiz', renderEstudar], ['metodo', 'Como funciona', renderMetodo]];
+const TABS = [['painel', 'Painel', renderPainel], ['balanco', 'Balanço', renderBalanco], ['dre', 'DRE', renderDRE], ['indices', 'Índices', renderIndices], ['ficha', 'Ficha da companhia', renderFicha], ['panorama', 'Panorama', renderPanorama], ['comparar', 'Comparar', renderComparar], ['rankings', 'Rankings setoriais', renderRankings], ['estudar', 'Quiz', renderEstudar], ['metodo', 'Como funciona', renderMetodo]];
 function go(t) { S.tab = t; $$('nav.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.t === t)); $$('section.view').forEach(s => s.classList.toggle('on', s.id === 'v-' + t)); renderAll(); window.scrollTo({ top: 0 }); try { history.replaceState(null, '', '#' + t); } catch (e) { } }
 function renderAll() { const t = TABS.find(x => x[0] === S.tab); t[2](); }
 function init() {
