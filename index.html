@@ -1185,7 +1185,7 @@ function PdfDoc() {
   this.W = 842; this.H = 595; this.M = 36; this.pages = []; this.ops = null; this.y = 0; this.newPage();
 }
 PdfDoc.prototype.newPage = function () { this.ops = []; this.pages.push(this.ops); this.y = this.M + 8; };
-PdfDoc.prototype.space = function (n) { if (this.y + n > this.H - this.M - 18) { this.newPage(); return true; } return false; };
+PdfDoc.prototype.space = function (n) { if (this.y + n > this.H - 52) { this.newPage(); return true; } return false; };
 PdfDoc.prototype.col = function (c, stroke) { this.ops.push(`${c[0]} ${c[1]} ${c[2]} ${stroke ? 'RG' : 'rg'}`); };
 const INK = [.09, .14, .12], ACC = [.118, .357, .310], GREY = [.42, .47, .45], LIGHT = [.80, .83, .81], WHITE = [1, 1, 1], RED = [.69, .22, .17], GREEN = [.17, .48, .29];
 function pesc(s) { return String(s).normalize('NFC').replace(/[—–−]/g, '-').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/…/g, '...').replace(/≈/g, '~').replace(/[≥]/g, '>=').replace(/[^\x20-\xFF]/g, '').replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)'); }
@@ -1213,7 +1213,7 @@ PdfDoc.prototype.table = function (cols, rows, o) {
   if (o.title) { this.space(14); this.text(o.title, x0, this.y + 8.5, { size: 8.6, bold: true }); this.y += 13; }
   head();
   rows.forEach(r => {
-    if (this.y + rh > this.H - this.M - 18) { this.newPage(); head(); }
+    if (this.y + rh > this.H - 52) { this.newPage(); head(); }
     let x = x0; const bold = r.bold;
     (r.c || r).forEach((cell, i) => { const c = cols[i]; if (!c) return;
       const tx = c.a === 'r' ? x + c.w - pad : c.a === 'c' ? x + c.w / 2 : x + pad + (r.ind || 0) * (i === 0 ? 7 : 0);
@@ -1226,7 +1226,7 @@ PdfDoc.prototype.table = function (cols, rows, o) {
   if (o.notes) o.notes.forEach(n => { this.para(n, x0, total, { size: 6.6, color: GREY }); });
   this.y += 8;
 };
-PdfDoc.prototype.h2 = function (t) { this.space(26); this.y += 8; this.text(t, this.M, this.y + 11, { size: 13, bold: true }); this.y += 15; this.line(this.M, this.y, this.M + 60, this.y, 2, ACC); this.y += 10; };
+PdfDoc.prototype.h2 = function (t) { this.space(30); this.y += 8; this.text(t, this.M, this.y + 11, { size: 13, bold: true }); this.y += 16; this.line(this.M, this.y, this.W - this.M, this.y, 1.6, ACC); this.y += 11; };
 PdfDoc.prototype.build = function (meta) {
   const n = this.pages.length;
   const chunks = []; const objs = []; let out = '%PDF-1.4\n';
@@ -1241,11 +1241,13 @@ PdfDoc.prototype.build = function (meta) {
     const id = 3 + i * 2;
     // rodapé
     const foot = [];
-    const fy = this.H - this.M + 10;
-    foot.push(`${LIGHT.join(' ')} RG .6 w ${this.M} ${(this.H - fy + 8).toFixed(2)} m ${(this.W - this.M).toFixed(2)} ${(this.H - fy + 8).toFixed(2)} l S`);
-    foot.push(`${GREY.join(' ')} rg BT /F1 6.6 Tf 1 0 0 1 ${this.M} ${(this.H - fy).toFixed(2)} Tm (${pesc(meta.foot)}) Tj ET`);
-    const pg = `${i + 1} / ${n}`;
-    foot.push(`${GREY.join(' ')} rg BT /F1 6.6 Tf 1 0 0 1 ${(this.W - this.M - tw(pg, 6.6)).toFixed(2)} ${(this.H - fy).toFixed(2)} Tm (${pesc(pg)}) Tj ET`);
+    const y1 = 30, y2 = 20, ry = 42;
+    const put = (txt, x, yy, size, col) => foot.push(`${(col || GREY).join(' ')} rg BT /F1 ${size} Tf 1 0 0 1 ${x.toFixed(2)} ${yy.toFixed(2)} Tm (${pesc(txt)}) Tj ET`);
+    foot.push(`${LIGHT.join(' ')} RG .6 w ${this.M} ${ry.toFixed(2)} m ${(this.W - this.M).toFixed(2)} ${ry.toFixed(2)} l S`);
+    put(meta.f1, this.M, y1, 7, INK);
+    put(meta.f2, this.M, y2, 6.4);
+    const pg = `Página ${i + 1} de ${n}`;
+    put(pg, this.W - this.M - tw(pg, 7), y1, 7);
     const stream = ops.concat(foot).join('\n');
     add(`${id} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${this.W} ${this.H}] /Resources << /Font << /F1 ${fontId} 0 R /F2 ${fontId + 1} 0 R >> >> /Contents ${id + 1} 0 R >>\nendobj\n`);
     add(`${id + 1} 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`);
@@ -1259,6 +1261,58 @@ PdfDoc.prototype.build = function (meta) {
   out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R /Info ${info} 0 R >>\nstartxref\n${xref}\n%%EOF`;
   const bytes = new Uint8Array(out.length); for (let i = 0; i < out.length; i++) bytes[i] = out.charCodeAt(i) & 0xFF;
   return new Blob([bytes], { type: 'application/pdf' });
+};
+
+
+/* ===== Gráficos vetoriais no PDF ===== */
+const PCOLS = [[.118, .357, .310], [.663, .478, .122], [.243, .310, .478], [.69, .22, .17]];
+PdfDoc.prototype.chartFrame = function (x, y, w, h, vals, fmt) {
+  const all = vals.filter(v => v != null && isFinite(v));
+  const ticks = niceTicks(Math.min(0, ...all), Math.max(0, ...all), 4);
+  const mn = ticks[0], mx = ticks[ticks.length - 1];
+  const py = v => y + h * (1 - (v - mn) / (mx - mn || 1));
+  ticks.forEach(t => { this.line(x, py(t), x + w, py(t), t === 0 ? .8 : .4, t === 0 ? GREY : LIGHT);
+    this.text(fmt(t), x - 4, py(t) + 2.4, { size: 6.2, align: 'r', color: GREY }); });
+  return { py, mn, mx };
+};
+PdfDoc.prototype.legend = function (x, y, series) {
+  let cx = x; series.forEach((se, i) => { const col = se.color || PCOLS[i % 4];
+    this.rect(cx, y - 4.5, 6, 5, col); cx += 9;
+    cx += this.text(se.name, cx, y, { size: 6.6, color: GREY }) + 12; });
+};
+PdfDoc.prototype.chartBars = function (opt) {
+  const w = opt.w || 350, h = opt.h || 120, x = opt.x != null ? opt.x : this.M;
+  this.space(h + 40);
+  if (opt.title) { this.text(opt.title, x, this.y + 8, { size: 8.2, bold: true }); this.y += 12; }
+  const y = this.y, fmt = opt.fmt || (v => NF0.format(v));
+  const f = this.chartFrame(x, y, w, h, opt.series.flatMap(s => s.values), fmt);
+  const n = opt.labels.length, gw = w / n, bw = Math.min(16, gw * .64 / opt.series.length);
+  opt.labels.forEach((l, i) => {
+    const gx = x + i * gw + (gw - bw * opt.series.length) / 2;
+    opt.series.forEach((se, k) => { const v = se.values[i]; if (v == null || !isFinite(v)) return;
+      const y0 = f.py(0), y1 = f.py(v); this.rect(gx + k * bw, Math.min(y0, y1), bw - 1.5, Math.abs(y1 - y0) || .6, se.color || PCOLS[k % 4]); });
+    this.text(l, x + i * gw + gw / 2, y + h + 9, { size: 6.4, align: 'c', color: GREY });
+  });
+  this.line(x, y + h, x + w, y + h, .6, GREY);
+  this.y = y + h + 24; this.legend(x, this.y, opt.series); this.y += 10;
+};
+PdfDoc.prototype.chartLines = function (opt) {
+  const w = opt.w || 350, h = opt.h || 120, x = opt.x != null ? opt.x : this.M;
+  this.space(h + 40);
+  if (opt.title) { this.text(opt.title, x, this.y + 8, { size: 8.2, bold: true }); this.y += 12; }
+  const y = this.y, fmt = opt.fmt || (v => NF1.format(v));
+  const f = this.chartFrame(x, y, w, h, opt.series.flatMap(s => s.values), fmt);
+  const n = opt.labels.length, px = i => x + (n === 1 ? w / 2 : i * w / (n - 1));
+  opt.series.forEach((se, k) => { const col = se.color || PCOLS[k % 4];
+    const segs = []; let pen = false;
+    se.values.forEach((v, i) => { if (v == null || !isFinite(v)) { pen = false; return; }
+      segs.push(`${px(i).toFixed(2)} ${(this.H - f.py(v)).toFixed(2)} ${pen ? 'l' : 'm'}`); pen = true; });
+    if (segs.length > 1) { this.col(col, true); this.ops.push(`1.4 w ${segs.join(' ')} S`); }
+    se.values.forEach((v, i) => { if (v == null || !isFinite(v)) return; this.rect(px(i) - 1.6, f.py(v) - 1.6, 3.2, 3.2, col); });
+  });
+  opt.labels.forEach((l, i) => this.text(l, px(i), y + h + 9, { size: 6.4, align: 'c', color: GREY }));
+  this.line(x, y + h, x + w, y + h, .6, GREY);
+  this.y = y + h + 24; this.legend(x, this.y, opt.series); this.y += 10;
 };
 
 /* ===== Conteúdo dos relatórios ===== */
@@ -1307,6 +1361,27 @@ function buildPDF(c, opts) {
     d.h2('Demonstração do Resultado');
     d.table(stmtCols(ys, mode, 230), repRows(ROWS_D, c, (cc, yy) => V(cc, yy, 'RL'), ys, mode), { title: `Tabela 4 – DRE padronizada, ${c.n} — ${ys[0]}–${ys[ys.length - 1]} (R$ mil; AV em %; AH em número-índice)`, notes: ['Fonte: elaboração própria com dados da CVM (DFP consolidadas).', 'Nota: AV calculada sobre a receita líquida.'] });
   }
+  if (opts.graf) {
+    d.h2('Gráficos');
+    const yg = ys;
+    const left = d.M, right = d.M + 400, cw = 350;
+    d.space(190); const yStart = d.y;
+    d.chartBars({ x: left, w: cw, title: 'Gráfico 1 – Receita líquida e resultado líquido (R$ milhões)', labels: yg, fmt: v => NF0.format(v),
+      series: [{ name: 'Receita líquida', values: yg.map(yy => V(c, yy, 'RL') / 1000) }, { name: 'Resultado líquido', values: yg.map(yy => V(c, yy, 'LL') / 1000) }] });
+    const yAfter1 = d.y; d.y = yStart;
+    d.chartLines({ x: right, w: cw, title: 'Gráfico 2 – Retornos (%)', labels: yg, fmt: v => NF1.format(v),
+      series: [{ name: 'ROE', values: yg.map(yy => ind(c, yy, 'ROE')) }, { name: 'ROA', values: yg.map(yy => ind(c, yy, 'ROA')) }, { name: 'RSV', values: yg.map(yy => ind(c, yy, 'RSV')) }] });
+    d.y = Math.max(yAfter1, d.y) + 6;
+    d.space(190); const yStart2 = d.y;
+    d.chartBars({ x: left, w: cw, title: 'Gráfico 3 – Liquidez (vezes)', labels: yg, fmt: v => NF1.format(v),
+      series: [{ name: 'Corrente', values: yg.map(yy => ind(c, yy, 'LC')) }, { name: 'Seca', values: yg.map(yy => ind(c, yy, 'LS')) }, { name: 'Geral', values: yg.map(yy => ind(c, yy, 'LG')) }] });
+    const yAfter3 = d.y; d.y = yStart2;
+    d.chartLines({ x: right, w: cw, title: 'Gráfico 4 – Estrutura de capitais (%)', labels: yg, fmt: v => NF0.format(v),
+      series: [{ name: 'PCT', values: yg.map(yy => ind(c, yy, 'PCT')) }, { name: 'Composição do endividamento', values: yg.map(yy => ind(c, yy, 'CE')) }, { name: 'Endividamento financeiro / ativo', values: yg.map(yy => ind(c, yy, 'EFSAT')) }] });
+    d.y = Math.max(yAfter3, d.y) + 4;
+    d.para('Fonte: elaboração própria com dados da CVM — Demonstrações Financeiras Padronizadas (DFP), demonstrações consolidadas.', d.M, d.W - 2 * d.M, { size: 6.6, color: GREY });
+    d.y += 6;
+  }
   if (opts.ind) {
     d.h2('Índices por grupo');
     ['E', 'L', 'R', 'P'].forEach(G => { const keys = IND.filter(x => x.g === G).map(x => x.k);
@@ -1336,7 +1411,9 @@ function buildPDF(c, opts) {
       alvo.map((x, i) => { const m = metas(c, y, x.k, x.alvo); return { c: [(i + 1) + 'ª', INDK[x.k].n + ' (' + x.k + ')', fmtInd(x.k, x.v) + ' → ' + fmtInd(x.k, x.alvo), m.length ? m[0][0].toLowerCase() + ': R$ ' + fmtBig(m[0][1]) : '—', PLAY[x.k].contas] }; }),
       { title: `Tabela 9 – Plano de ação por prioridade, ${c.n} — ${y}`, notes: ['Nota: metas calculadas pela diferença entre o valor da companhia e a mediana do setor, mantidas constantes as demais contas.'] });
   }
-  return d.build({ title: 'Análise das demonstrações contábeis — ' + c.n, author: 'Analisador DFP', foot: `Analisador DFP · ${c.n} · exercício ${y} · Fonte: CVM (DFP consolidadas) · Metodologia: Análise das Demonstrações Contábeis, Prof. Saulo Cardoso Maia (DECAC/UFSJ) · Elaborado por Luiz Gabriel de Sousa (DCECO/UFSJ)` });
+  return d.build({ title: 'Análise das demonstrações contábeis — ' + c.n, author: 'Analisador DFP',
+    f1: `Analisador DFP · ${c.n} · exercício ${y}`,
+    f2: 'Fonte dos dados: CVM — Demonstrações Financeiras Padronizadas (DFP), demonstrações consolidadas. Metodologia: Análise das Demonstrações Contábeis, Prof. Saulo Cardoso Maia (DECAC/UFSJ). Elaborado por: Luiz Gabriel de Sousa (DCECO/UFSJ).' });
 }
 
 /* ===== Gerador de XLSX (sem dependências) ===== */
@@ -1409,8 +1486,39 @@ function sheetXML(sh) {
   const cols = sh.widths ? `<cols>${sh.widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>` : '';
   const pane = sh.freeze ? `<sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ySplit="${sh.freeze}" topLeftCell="A${sh.freeze + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>` : `<sheetViews><sheetView workbookViewId="0" showGridLines="0"/></sheetViews>`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${pane}${cols}<sheetData>${rows}</sheetData></worksheet>`;
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${pane}${cols}<sheetData>${rows}</sheetData>${sh.charts && sh.charts.length ? '<drawing r:id="rId1"/>' : ''}</worksheet>`;
 }
+
+/* ===== Gráficos nativos no Excel ===== */
+const XCOL = ['1E5B4F', 'A97A1F', '3E4F7A', 'B0392C'];
+function chartXML(ch, sheetName) {
+  const ref = r => `'${sheetName.replace(/'/g, "''")}'!${r}`;
+  const ser = ch.series.map((se, i) => `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>
+    <c:tx><c:strRef><c:f>${xesc(ref(se.nameRef))}</c:f></c:strRef></c:tx>
+    <c:spPr>${ch.type === 'line' ? `<a:ln w="25400"><a:solidFill><a:srgbClr val="${XCOL[i % 4]}"/></a:solidFill></a:ln>` : `<a:solidFill><a:srgbClr val="${XCOL[i % 4]}"/></a:solidFill>`}</c:spPr>
+    ${ch.type === 'line' ? '<c:marker><c:symbol val="circle"/><c:size val="5"/></c:marker>' : ''}
+    <c:cat><c:strRef><c:f>${xesc(ref(ch.cat))}</c:f></c:strRef></c:cat>
+    <c:val><c:numRef><c:f>${xesc(ref(se.valRef))}</c:f></c:numRef></c:val>${ch.type === 'line' ? '<c:smooth val="0"/>' : ''}</c:ser>`).join('');
+  const plot = ch.type === 'line'
+    ? `<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>${ser}<c:marker val="1"/><c:axId val="111"/><c:axId val="222"/></c:lineChart>`
+    : `<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>${ser}<c:gapWidth val="60"/><c:axId val="111"/><c:axId val="222"/></c:barChart>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1100" b="1"><a:solidFill><a:srgbClr val="17231F"/></a:solidFill></a:defRPr></a:pPr><a:r><a:rPr lang="pt-BR" sz="1100" b="1"/><a:t>${xesc(ch.title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>
+<c:plotArea><c:layout/>${plot}
+<c:catAx><c:axId val="111"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="222"/></c:catAx>
+<c:valAx><c:axId val="222"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:numFmt formatCode="${xesc(ch.fmt || '#,##0')}" sourceLinked="0"/><c:crossAx val="111"/></c:valAx>
+</c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend><c:plotVisOnly val="1"/></c:chart></c:chartSpace>`;
+}
+function drawingXML(charts) {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+${charts.map((ch, i) => `<xdr:twoCellAnchor><xdr:from><xdr:col>${ch.col}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${ch.row}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>${ch.col + (ch.cols || 7)}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${ch.row + (ch.rows || 16)}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${i + 2}" name="Gráfico ${i + 1}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>
+<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId${i + 1}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>`).join('')}
+</xdr:wsDr>`;
+}
+
 function buildXLSX(sheets, title) {
   const enc = new TextEncoder(); const files = [];
   const F = (name, str) => files.push({ name, data: enc.encode(str) });
@@ -1420,6 +1528,22 @@ function buildXLSX(sheets, title) {
   F('xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`);
   F('xl/styles.xml', STYLES_XML);
   sheets.forEach((s, i) => F(`xl/worksheets/sheet${i + 1}.xml`, sheetXML(s)));
+  let cn = 0;
+  sheets.forEach((s, i) => {
+    if (!s.charts || !s.charts.length) return;
+    const dn = i + 1; const ids = [];
+    s.charts.forEach(ch => { cn++; ids.push(cn); F(`xl/charts/chart${cn}.xml`, chartXML(ch, s.name)); });
+    F(`xl/drawings/drawing${dn}.xml`, drawingXML(s.charts));
+    F(`xl/drawings/_rels/drawing${dn}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${ids.map((id, k) => `<Relationship Id="rId${k + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart${id}.xml"/>`).join('')}</Relationships>`);
+    F(`xl/worksheets/_rels/sheet${i + 1}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${dn}.xml"/></Relationships>`);
+  });
+  if (cn) { const ct = files.find(f => f.name === '[Content_Types].xml');
+    let x = new TextDecoder().decode(ct.data);
+    let extra = '';
+    sheets.forEach((s, i) => { if (s.charts && s.charts.length) extra += `<Override PartName="/xl/drawings/drawing${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`; });
+    for (let k = 1; k <= cn; k++) extra += `<Override PartName="/xl/charts/chart${k}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`;
+    ct.data = enc.encode(x.replace('</Types>', extra + '</Types>'));
+  }
   return zipStore(files);
 }
 const N = (v, s) => v == null || !isFinite(v) ? { t: '—', s: 0 } : { n: +(+v).toFixed(4), s: s };
@@ -1476,6 +1600,27 @@ function xlsxReport(c, opts) {
     rp.push([], [{ t: SRCX, s: 8 }], [{ t: 'Nota: metas calculadas pela diferença entre o valor da companhia e a mediana do setor, mantidas constantes as demais contas.', s: 8 }]);
     sheets.push({ name: 'Panorama', rows: rp, widths: [40, 13, 13, 11, 11, 11, 13, 13], freeze: 5 });
   }
+  if (opts.graf) {
+    const rg = head('Gráficos', `${c.n} · ${ys[0]}–${ys[ys.length - 1]}`);
+    const r0 = rg.length + 1; // linha do cabeçalho da tabela de apoio
+    rg.push([{ t: 'Exercício', s: 3 }, { t: 'Receita líquida (R$ mil)', s: 3 }, { t: 'Resultado líquido (R$ mil)', s: 3 }, { t: 'ROE (%)', s: 3 }, { t: 'ROA (%)', s: 3 }, { t: 'RSV (%)', s: 3 }, { t: 'Liquidez corrente', s: 3 }, { t: 'Liquidez seca', s: 3 }, { t: 'PCT (%)', s: 3 }]);
+    ys.forEach(yy => rg.push([{ t: yy }, N(V(c, yy, 'RL'), 5), N(V(c, yy, 'LL'), 5), N(ind(c, yy, 'ROE'), 6), N(ind(c, yy, 'ROA'), 6), N(ind(c, yy, 'RSV'), 6), N(ind(c, yy, 'LC'), 7), N(ind(c, yy, 'LS'), 7), N(ind(c, yy, 'PCT'), 6)]));
+    const first = r0 + 1, last = r0 + ys.length;
+    const col = i => colLetter(i);
+    const serie = i => ({ nameRef: `$${col(i)}$${r0}`, valRef: `$${col(i)}$${first}:$${col(i)}$${last}` });
+    const cat = `$A$${first}:$A$${last}`;
+    const chartRow = last + 2;
+    while (rg.length < chartRow + 35) rg.push([]);
+    rg.push([{ t: 'Fonte: elaboração própria com dados da CVM — Demonstrações Financeiras Padronizadas (DFP), demonstrações consolidadas.', s: 8 }],
+      [{ t: 'Nota: os gráficos são objetos nativos do Excel, ligados à tabela acima; ao alterar um valor, o gráfico se ajusta.', s: 8 }]);
+    sheets.push({ name: 'Gráficos', rows: rg, widths: [12, 20, 20, 11, 11, 11, 15, 13, 11], freeze: r0,
+      charts: [
+        { type: 'bar', title: 'Receita líquida e resultado líquido (R$ mil)', cat, series: [serie(1), serie(2)], fmt: '#,##0', col: 0, row: chartRow, cols: 7, rows: 16 },
+        { type: 'line', title: 'Retornos (%)', cat, series: [serie(3), serie(4), serie(5)], fmt: '0.0', col: 7, row: chartRow, cols: 7, rows: 16 },
+        { type: 'bar', title: 'Liquidez (vezes)', cat, series: [serie(6), serie(7)], fmt: '0.00', col: 0, row: chartRow + 17, cols: 7, rows: 16 },
+        { type: 'line', title: 'Participação de capitais de terceiros (%)', cat, series: [serie(8)], fmt: '#,##0', col: 7, row: chartRow + 17, cols: 7, rows: 16 }
+      ] });
+  }
   if (opts.dados) {
     const rd = head('Base padronizada', `${c.n} · valores em R$ mil`);
     rd.push([{ t: 'Rubrica', s: 3 }, { t: 'Campo', s: 3 }].concat(ys.map(yy => ({ t: yy, s: 3 }))));
@@ -1488,16 +1633,16 @@ function xlsxReport(c, opts) {
 }
 
 /* ===== Aba Exportar ===== */
-const EXP = { bal: true, dre: true, ind: true, pan: true, dados: false };
+const EXP = { bal: true, dre: true, graf: true, ind: true, pan: true, dados: false };
 function renderExportar() {
   const c = cur(); const y = effYear(c); const el = $('#v-exportar'); const ys = YEARS.filter(yy => has(c, yy));
   const opt = (k, lab) => `<label class="ctl"><input type="checkbox" data-opt="${k}" ${EXP[k] ? 'checked' : ''}> ${lab}</label>`;
   el.innerHTML = `<h1>Exportar</h1><p class="lede">Gere o relatório completo da companhia selecionada em PDF, pronto para imprimir ou anexar, ou em planilha .xlsx, com os números já formatados para continuar a análise. Os dois arquivos seguem o layout do site e são montados no seu navegador.</p>
   <div class="panel"><h3>${esc(c.n)}</h3><p class="muted" style="margin-top:0">Exercício em análise ${y} · exercícios no relatório: ${ys.join(', ')} · Análise Horizontal: ${S.ah === 'enc' ? 'ano a ano' : 'base fixa'} (altere na aba Balanço)</p>
-  <div class="toolbar">${opt('bal', 'Balanço Patrimonial')}${opt('dre', 'DRE')}${opt('ind', 'Índices')}${opt('pan', 'Panorama e plano de ação')}${opt('dados', 'Base padronizada (só no Excel)')}</div>
+  <div class="toolbar">${opt('bal', 'Balanço Patrimonial')}${opt('dre', 'DRE')}${opt('graf', 'Gráficos')}${opt('ind', 'Índices')}${opt('pan', 'Panorama e plano de ação')}${opt('dados', 'Base padronizada (só no Excel)')}</div>
   <div class="toolbar"><button class="btn" id="bpdf">Baixar PDF</button><button class="btn" id="bxls">Baixar Excel (.xlsx)</button><span class="muted" id="expmsg"></span></div></div>
-  <div class="grid2" style="margin-top:22px"><div class="panel"><h3>O que vem no PDF</h3><ul><li>Cabeçalho com identificação da companhia e do exercício;</li><li>resumo dos indicadores com a mediana do setor e a situação de cada um;</li><li>Balanço e DRE padronizados com VA, AV e AH;</li><li>índices por grupo, com fórmula e tipo;</li><li>panorama com prioridades, metas e plano de ação;</li><li>rodapé com fonte, metodologia e numeração de páginas.</li></ul><p class="muted" style="font-size:13px">Formato A4 paisagem, em tipografia e cores do site.</p></div>
-  <div class="panel"><h3>O que vem no Excel</h3><ul><li>Uma aba para cada bloco: Resumo, Balanço Ativo, Balanço Passivo, DRE, Índices e Panorama;</li><li>valores como número, com formatos de milhar, percentual e dias já aplicados;</li><li>cabeçalhos fixos ao rolar e larguras de coluna ajustadas;</li><li>fonte e notas no rodapé de cada aba, no padrão das tabelas do site;</li><li>opcionalmente, a aba Dados com a base padronizada para seus próprios cálculos.</li></ul></div></div>
+  <div class="grid2" style="margin-top:22px"><div class="panel"><h3>O que vem no PDF</h3><ul><li>Cabeçalho com identificação da companhia e do exercício;</li><li>resumo dos indicadores com a mediana do setor e a situação de cada um;</li><li>Balanço e DRE padronizados com VA, AV e AH;</li><li>quatro gráficos: receita e resultado, retornos, liquidez e estrutura de capitais;</li><li>índices por grupo, com fórmula e tipo;</li><li>panorama com prioridades, metas e plano de ação;</li><li>rodapé com fonte, metodologia e numeração de páginas.</li></ul><p class="muted" style="font-size:13px">Formato A4 paisagem, em tipografia e cores do site.</p></div>
+  <div class="panel"><h3>O que vem no Excel</h3><ul><li>Uma aba para cada bloco: Resumo, Balanço Ativo, Balanço Passivo, DRE, Gráficos, Índices e Panorama;</li><li>gráficos nativos do Excel, ligados à tabela de apoio e editáveis;</li><li>valores como número, com formatos de milhar, percentual e dias já aplicados;</li><li>cabeçalhos fixos ao rolar e larguras de coluna ajustadas;</li><li>fonte e notas no rodapé de cada aba, no padrão das tabelas do site;</li><li>opcionalmente, a aba Dados com a base padronizada para seus próprios cálculos.</li></ul></div></div>
   ${srcBlock(['Os arquivos são gerados no navegador, sem envio de dados. O conteúdo reflete a companhia e o exercício selecionados no topo da página.'])}`;
   $$('[data-opt]', el).forEach(b => b.onchange = () => { EXP[b.dataset.opt] = b.checked; });
   const msg = $('#expmsg', el);
