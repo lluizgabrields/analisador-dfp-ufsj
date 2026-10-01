@@ -640,7 +640,7 @@ function renderPainel() {
     <div class="panel"><h3>Retornos ao longo do tempo</h3><p class="muted" style="margin:0 0 8px;font-size:13px">% ao ano</p>${lineChart({ labels: YEARS, series: ['ROE', 'ROA', 'RSV'].map((k, i) => ({ name: k, values: YEARS.map(yy => ind(c, yy, k)) })), fmt: v => NF1.format(v) + '%', zero: true })}</div>
   </div>
   <h2>Por onde continuar</h2>
-  <p class="lede">As abas acima detalham o Balanço e a DRE padronizados (com AV e AH), os índices por grupo, a ficha da companhia, o panorama com plano de ação, a comparação com outras empresas e os rankings setoriais. Na aba Quiz, o sistema gera perguntas sobre esta companhia para você treinar a interpretação.</p>`;
+  <p class="lede">As abas acima detalham o Balanço e a DRE padronizados (com AV e AH), os índices por grupo, a ficha da companhia, o panorama com plano de ação, a comparação com outras empresas e os rankings setoriais. Em Importar, você analisa demonstrações que não estão na base; em Exportar, baixa tudo em PDF ou planilha. Na aba Quiz, o sistema gera perguntas sobre esta companhia para você treinar a interpretação.</p>`;
 }
 
 /* ===== Balanço ===== */
@@ -1004,6 +1004,507 @@ function renderPanorama() {
   el.innerHTML = h;
 }
 
+/* ===== Importação de demonstrações contábeis ===== */
+const CODE2F = { '1': 'AT', '1.01': 'AC', '1.01.01': 'DISP', '1.01.02': 'APLIC', '1.01.03': 'CREC', '1.01.04': 'EST', '1.02': 'ANC', '1.02.01': 'RLP', '1.02.01.04': 'RLPCR', '1.02.01.05': 'RLPEST', '1.02.02': 'INV', '1.02.03': 'IMOB', '1.02.04': 'INTANG', '2': 'PT', '2.01': 'PC', '2.01.02': 'FORN', '2.01.04': 'EMPPC', '2.02': 'PNC', '2.02.01': 'EMPPNC', '2.03': 'PL', '3.01': 'RL', '3.02': 'CPV', '3.03': 'LB', '3.04.01': 'DVEND', '3.04.02': 'DADM', '3.04.06': 'EQPAT', '3.05': 'LOP1', '3.06.01': 'RECFIN', '3.06.02': 'DESFIN', '3.07': 'LOP3', '3.08': 'IRCS', '3.09': 'RLOC', '3.10': 'RDESC', '3.11': 'LL' };
+const CODESUM = { CAPRES: ['2.03.01', '2.03.02', '2.03.09'], RESLUC: ['2.03.04', '2.03.05'], AJUST: ['2.03.03', '2.03.06', '2.03.07', '2.03.08'], OUTOP: ['3.04.03', '3.04.04', '3.04.05'] };
+function splitCSV(line, sep) {
+  const out = []; let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) { const ch = line[i];
+    if (q) { if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"') q = true; else if (ch === sep) { out.push(cur); cur = ''; } else cur += ch; }
+  out.push(cur); return out.map(s => s.trim());
+}
+function readCSV(txt) {
+  const lines = txt.replace(/\r/g, '').split('\n').filter(l => l.trim().length);
+  if (!lines.length) return { head: [], rows: [] };
+  const sep = [';', ',', '\t'].map(s => [s, lines[0].split(s).length]).sort((a, b) => b[1] - a[1])[0][0];
+  const head = splitCSV(lines[0], sep).map(h => h.replace(/^\ufeff/, ''));
+  return { head, rows: lines.slice(1).map(l => splitCSV(l, sep)), sep };
+}
+function num(s) {
+  if (s == null) return null; s = String(s).trim().replace(/\s|R\$/g, '');
+  if (!s || s === '-' || s === '—') return null;
+  let neg = /^\(.*\)$/.test(s); s = s.replace(/[()]/g, '');
+  if (s.includes(',') && s.includes('.')) s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+  else if (s.includes(',')) s = s.replace(',', '.');
+  const v = parseFloat(s); if (!isFinite(v)) return null; return neg ? -v : v;
+}
+function blankRec() { const o = {}; FLD.forEach(f => o[f] = 0); return o; }
+function derive(o) {
+  o.OUTAC = o.AC - o.DISP - o.APLIC - o.CREC - o.EST;
+  o.RLPDEM = o.RLP - o.RLPCR - o.RLPEST;
+  o.OUTPC = o.PC - o.FORN - o.EMPPC; o.OUTPNC = o.PNC - o.EMPPNC;
+  o.OUTPL = o.PL - o.CAPRES - o.RESLUC - o.AJUST;
+  if (!o.PT && o.AT) o.PT = o.AT;
+  return o;
+}
+function parseCVM(head, rows) { // arquivos BPA/BPP/DRE da CVM
+  const ix = {}; head.forEach((h, i) => ix[h.toUpperCase()] = i);
+  const need = ['CD_CONTA', 'VL_CONTA', 'DT_FIM_EXERC', 'DENOM_CIA']; if (!need.every(k => k in ix)) return null;
+  const acc = {};
+  rows.forEach(r => {
+    const code = r[ix.CD_CONTA], y = (r[ix.DT_FIM_EXERC] || '').slice(0, 4), v = num(r[ix.VL_CONTA]);
+    if (!code || !y || v == null) return;
+    if (ix.DT_INI_EXERC != null && r[ix.DT_INI_EXERC] && r[ix.DT_INI_EXERC].slice(0, 4) !== y) return; // só exercício completo
+    const key = (ix.CNPJ_CIA != null ? r[ix.CNPJ_CIA] : r[ix.DENOM_CIA]) || r[ix.DENOM_CIA];
+    const ver = ix.VERSAO != null ? +r[ix.VERSAO] || 1 : 1;
+    const co = acc[key] || (acc[key] = { n: r[ix.DENOM_CIA], c: ix.CNPJ_CIA != null ? r[ix.CNPJ_CIA] : '—', v: ix.CD_CVM != null ? r[ix.CD_CVM] : '—', esc: ix.ESCALA_MOEDA != null ? r[ix.ESCALA_MOEDA] : 'MIL', ver: {}, y: {}, fin: false });
+    if ((co.ver[y] || 0) > ver) return; if ((co.ver[y] || 0) < ver) { co.ver[y] = ver; co.y[y] = {}; }
+    const ds = (ix.DS_CONTA != null ? r[ix.DS_CONTA] : '') || '';
+    if (code === '3.01' && ds && !/^Receita de Venda/i.test(ds)) co.fin = true;
+    if (code === '1.01' && ds && !/^Ativo Circulante/i.test(ds)) co.fin = true;
+    co.y[y][code] = (co.y[y][code] || 0) + v;
+  });
+  return Object.values(acc).map(co => {
+    const d = {};
+    Object.keys(co.y).forEach(y => {
+      const o = blankRec(), src = co.y[y];
+      Object.keys(CODE2F).forEach(cd => { if (src[cd] != null) o[CODE2F[cd]] = src[cd]; });
+      Object.keys(CODESUM).forEach(f => CODESUM[f].forEach(cd => { if (src[cd] != null) o[f] += src[cd]; }));
+      derive(o);
+      const div = (co.esc === 'UNIDADE' && Math.abs(o.AT) / 1000 >= 5000) ? 1000 : 1;
+      d[y] = FLD.map(f => Math.round(o[f] / div));
+    });
+    return { n: co.n, c: co.c, v: co.v, f: co.fin, e: co.esc, d, fmt: 'CVM' };
+  }).filter(x => Object.keys(x.d).length);
+}
+function parseModelo(head, rows, fname) { // modelo simplificado: código da conta + um exercício por coluna
+  const h = head.map(x => x.toUpperCase());
+  const ci = h.findIndex(x => /^(CODIGO|CÓDIGO|CONTA|CD_CONTA)$/.test(x)); if (ci < 0) return null;
+  const cols = head.map((x, i) => ({ i, y: (String(x).match(/(19|20)\d{2}/) || [])[0] })).filter(c => c.y);
+  if (!cols.length) return null;
+  let nome = (fname || 'Demonstração importada').replace(/\.[a-z]+$/i, '');
+  const meta = {};
+  const data = {}; cols.forEach(c => data[c.y] = blankRec());
+  rows.forEach(r => {
+    const code = (r[ci] || '').trim();
+    if (/^(NOME|EMPRESA|COMPANHIA|DENOM_CIA)$/i.test(code)) { nome = r[cols[0].i] || nome; return; }
+    if (/^CNPJ$/i.test(code)) { meta.c = r[cols[0].i]; return; }
+    if (!/^[123](\.\d{2})*$/.test(code)) return;
+    cols.forEach(c => { const v = num(r[c.i]); if (v == null) return;
+      if (CODE2F[code]) data[c.y][CODE2F[code]] += v;
+      Object.keys(CODESUM).forEach(f => { if (CODESUM[f].includes(code)) data[c.y][f] += v; }); });
+  });
+  const d = {}; Object.keys(data).forEach(y => { if (data[y].AT || data[y].RL || data[y].PT) d[y] = FLD.map(f => Math.round(derive(data[y])[f])); });
+  if (!Object.keys(d).length) return null;
+  return [{ n: nome, c: meta.c || '—', v: '—', f: false, e: 'MIL', d, fmt: 'Modelo' }];
+}
+async function readFiles(files) {
+  const found = [];
+  for (const f of files) {
+    const buf = await f.arrayBuffer(); let txt;
+    try { txt = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (e) { txt = new TextDecoder('iso-8859-1').decode(buf); }
+    const { head, rows } = readCSV(txt);
+    const r = parseCVM(head, rows) || parseModelo(head, rows, f.name);
+    if (r) r.forEach(x => found.push(Object.assign(x, { file: f.name })));
+    else found.push({ erro: f.name });
+  }
+  // junta BPA + BPP + DRE da mesma companhia
+  const merged = [];
+  found.filter(x => !x.erro).forEach(x => {
+    const same = merged.find(m => m.c === x.c && m.n === x.n);
+    if (!same) { merged.push(Object.assign({}, x, { files: [x.file] })); return; }
+    same.files.push(x.file); same.f = same.f || x.f;
+    Object.keys(x.d).forEach(y => {
+      if (!same.d[y]) { same.d[y] = x.d[y]; return; }
+      same.d[y] = same.d[y].map((v, i) => v || x.d[y][i]);
+    });
+  });
+  merged.forEach(m => Object.keys(m.d).forEach(y => { const o = {}; FLD.forEach((f, i) => o[f] = m.d[y][i]); derive(o); m.d[y] = FLD.map(f => Math.round(o[f])); }));
+  return { merged, erros: found.filter(x => x.erro).map(x => x.erro) };
+}
+function addImported(x) {
+  const c = { c: x.c && x.c !== '—' ? x.c : 'IMPORTADA-' + (CO.length + 1), n: x.n, v: x.v || '—', f: !!x.f, s: 'Importadas', u: '', g: '', a: '', x: 1, e: x.e || 'MIL', d: x.d, imp: 1 };
+  const old = CO.find(o => o.n === c.n && o.imp);
+  if (old) { Object.assign(old, c, { i: old.i }); cache.clear(); return old.i; }
+  c.i = CO.length; c.key = norm(c.n + ' ' + c.c);
+  CO.push(c); if (!sectors.includes('Importadas')) sectors.push('Importadas');
+  Object.keys(c.d).forEach(y => { if (!YEARS.includes(y) && /^(19|20)\d{2}$/.test(y)) { YEARS.push(y); YEARS.sort(); } });
+  cache.clear(); return c.i;
+}
+function modeloCSV() {
+  const rows = [['CODIGO', 'DESCRICAO', '2024', '2025'], ['NOME', 'Nome da companhia', 'Minha Empresa Ltda', ''], ['CNPJ', 'CNPJ (opcional)', '00.000.000/0001-00', '']];
+  const add = (cd, ds) => rows.push([cd, ds, '', '']);
+  [['1', 'Ativo total'], ['1.01', 'Ativo circulante'], ['1.01.01', 'Caixa e equivalentes'], ['1.01.02', 'Aplicações financeiras'], ['1.01.03', 'Contas a receber'], ['1.01.04', 'Estoques'], ['1.02', 'Ativo não circulante'], ['1.02.01', 'Realizável a longo prazo'], ['1.02.02', 'Investimentos'], ['1.02.03', 'Imobilizado'], ['1.02.04', 'Intangível'],
+  ['2', 'Passivo + patrimônio líquido'], ['2.01', 'Passivo circulante'], ['2.01.02', 'Fornecedores'], ['2.01.04', 'Empréstimos de curto prazo'], ['2.02', 'Passivo não circulante'], ['2.02.01', 'Empréstimos de longo prazo'], ['2.03', 'Patrimônio líquido'], ['2.03.01', 'Capital social'], ['2.03.04', 'Reservas de lucros'],
+  ['3.01', 'Receita líquida'], ['3.02', 'CPV (negativo)'], ['3.03', 'Lucro bruto'], ['3.04.01', 'Despesas com vendas (negativo)'], ['3.04.02', 'Despesas administrativas (negativo)'], ['3.05', 'Lucro operacional (Lajir)'], ['3.06.01', 'Receitas financeiras'], ['3.06.02', 'Despesas financeiras (negativo)'], ['3.07', 'Lucro antes dos tributos'], ['3.08', 'IR e CSLL (negativo)'], ['3.11', 'Resultado líquido']].forEach(r => add(r[0], r[1]));
+  return rows.map(r => r.join(';')).join('\n');
+}
+function dl(blob, name) { const u = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); }
+const slug = s => norm(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+
+function renderImportar() {
+  const el = $('#v-importar'); const r = IMPSTATE.res;
+  el.innerHTML = `<h1>Importar</h1><p class="lede">Analise demonstrações que não estão na base: arquivos da CVM de outros exercícios ou de outras companhias, e também demonstrações próprias, de empresas fechadas, preenchidas em um modelo simples. O arquivo é lido no seu navegador e nada é enviado para servidor algum.</p>
+  <div class="panel" id="drop" style="border:2px dashed var(--rule);text-align:center;padding:30px">
+    <p style="margin:0 0 10px"><b>Arraste os arquivos aqui</b> ou selecione no botão abaixo.</p>
+    <p class="muted" style="margin:0 0 14px;font-size:13px">Formatos aceitos: CSV. Pode enviar vários de uma vez (BPA, BPP e DRE do mesmo ano são combinados automaticamente).</p>
+    <input type="file" id="fin" accept=".csv,.txt" multiple style="display:none">
+    <button class="btn" id="fbtn">Selecionar arquivos</button>
+    <button class="btn ghost" id="tpl">Baixar modelo CSV</button>
+  </div>
+  <div id="impres"></div>
+  <h2>Como preparar o arquivo</h2>
+  <div class="grid2"><div class="panel"><h3>Arquivos da CVM</h3><p>Baixe os arquivos DFP ou ITR no portal de dados abertos da CVM, descompacte o .zip e envie os CSVs <code>BPA</code>, <code>BPP</code> e <code>DRE</code> (consolidados ou individuais). O sistema identifica as colunas, usa a versão mais recente de cada documento, converte a escala e separa os exercícios.</p><p class="muted" style="font-size:13px">O arquivo .zip precisa ser descompactado antes do envio.</p></div>
+  <div class="panel"><h3>Demonstrações próprias</h3><p>Use o modelo CSV: a primeira coluna traz o código da conta no padrão da CVM, a segunda a descrição e as demais um exercício cada. Preencha os valores em R$ mil, com despesas e custos negativos. Linhas em branco são tratadas como zero, e as rubricas residuais são calculadas por diferença.</p><p class="muted" style="font-size:13px">Também é possível exportar o modelo do Excel como CSV (separado por ponto e vírgula).</p></div></div>
+  ${srcBlock(['As companhias importadas ficam disponíveis em todas as abas enquanto a página estiver aberta e são identificadas pelo setor “Importadas”. Ao recarregar, a base volta ao estado original.', 'Para comparações setoriais, uma empresa importada é confrontada com o conjunto de companhias do mesmo tipo, já que não há setor atribuído.'])}`;
+  const fin = $('#fin', el);
+  $('#fbtn', el).onclick = () => fin.click();
+  $('#tpl', el).onclick = () => dl(new Blob(['\ufeff' + modeloCSV()], { type: 'text/csv;charset=utf-8' }), 'modelo-demonstracoes.csv');
+  fin.onchange = () => handleFiles(fin.files);
+  const drop = $('#drop', el);
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = 'var(--rule)'; }));
+  drop.addEventListener('drop', e => { if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
+  if (r) showImport(r);
+}
+const IMPSTATE = { res: null };
+async function handleFiles(files) {
+  $('#impres').innerHTML = '<p class="muted">Lendo arquivos…</p>';
+  try { const r = await readFiles([...files]); IMPSTATE.res = r; showImport(r); }
+  catch (e) { $('#impres').innerHTML = `<div class="empty-state">Não foi possível ler o arquivo (${esc(e.message)}). Confira se é um CSV válido.</div>`; }
+}
+function showImport(r) {
+  const box = $('#impres'); if (!box) return;
+  let h = '';
+  if (r.erros.length) h += `<div class="empty-state" style="margin-top:14px">Não reconheci o formato de: ${r.erros.map(esc).join(', ')}. Use os CSVs da CVM ou o modelo.</div>`;
+  if (!r.merged.length) { box.innerHTML = h; return; }
+  h += `<h2>Demonstrações reconhecidas</h2><div class="tw"><table class="ibge"><caption>Quadro 2 – Companhias encontradas nos arquivos enviados</caption><thead><tr><th style="text-align:left">Companhia</th><th style="text-align:left">CNPJ</th><th style="text-align:left">Formato</th><th style="text-align:left">Exercícios</th><th>Ativo total do último (R$ mil)</th><th></th></tr></thead><tbody>`;
+  r.merged.forEach((x, i) => { const ys = Object.keys(x.d).sort(); const last = ys[ys.length - 1];
+    h += `<tr><td class="l">${esc(x.n)}</td><td class="l">${esc(x.c)}</td><td class="l">${x.fmt === 'CVM' ? 'CVM' : 'Modelo'}</td><td class="l">${ys.join(', ')}</td><td>${fmtMil(x.d[last][FI.AT])}</td><td><button class="btn" data-add="${i}">Analisar</button></td></tr>`; });
+  h += `</tbody></table></div>` + srcBlock(['Confira o ativo total antes de analisar: se o valor estiver mil vezes maior ou menor que o esperado, a escala do arquivo precisa de ajuste.']);
+  box.innerHTML = h;
+  $$('[data-add]', box).forEach(b => b.onclick = () => { const i = addImported(r.merged[+b.dataset.add]); const c = CO[i]; const ys = Object.keys(c.d).sort(); S.year = ys[ys.length - 1]; $('#yr').innerHTML = [...YEARS].reverse().map(y => `<option>${y}</option>`).join(''); $('#yr').value = S.year; selectCo(i); go('painel'); });
+}
+
+/* ===== Gerador de PDF (sem dependências) ===== */
+const HW = { ' ': .278, '.': .278, ',': .278, '%': .889, '-': .333, '(': .333, ')': .333, '/': .278, ':': .278, ';': .278, '+': .584, '=': .584, '§': .556 };
+function chw(ch) { if (ch >= '0' && ch <= '9') return .556; if (HW[ch] != null) return HW[ch]; if (ch >= 'A' && ch <= 'Z') return .68; if (ch === 'i' || ch === 'l' || ch === 'j' || ch === 't' || ch === 'f') return .28; if (ch === 'm' || ch === 'w') return .83; return .55; }
+function tw(s, size, bold) { let w = 0; for (const ch of s) w += chw(ch); return w * size * (bold ? 1.06 : 1); }
+function PdfDoc() {
+  this.W = 842; this.H = 595; this.M = 36; this.pages = []; this.ops = null; this.y = 0; this.newPage();
+}
+PdfDoc.prototype.newPage = function () { this.ops = []; this.pages.push(this.ops); this.y = this.M + 8; };
+PdfDoc.prototype.space = function (n) { if (this.y + n > this.H - this.M - 18) { this.newPage(); return true; } return false; };
+PdfDoc.prototype.col = function (c, stroke) { this.ops.push(`${c[0]} ${c[1]} ${c[2]} ${stroke ? 'RG' : 'rg'}`); };
+const INK = [.09, .14, .12], ACC = [.118, .357, .310], GREY = [.42, .47, .45], LIGHT = [.80, .83, .81], WHITE = [1, 1, 1], RED = [.69, .22, .17], GREEN = [.17, .48, .29];
+function pesc(s) { return String(s).normalize('NFC').replace(/[—–−]/g, '-').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/…/g, '...').replace(/≈/g, '~').replace(/[≥]/g, '>=').replace(/[^\x20-\xFF]/g, '').replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)'); }
+PdfDoc.prototype.text = function (s, x, y, o) { o = o || {}; const size = o.size || 9, f = o.bold ? '/F2' : '/F1';
+  let xx = x; const wdt = tw(String(s), size, o.bold);
+  if (o.align === 'r') xx = x - wdt; else if (o.align === 'c') xx = x - wdt / 2;
+  this.col(o.color || INK); this.ops.push(`BT ${f} ${size} Tf 1 0 0 1 ${xx.toFixed(2)} ${(this.H - y).toFixed(2)} Tm (${pesc(s)}) Tj ET`); return wdt; };
+PdfDoc.prototype.line = function (x1, y1, x2, y2, w, c) { this.col(c || LIGHT, true); this.ops.push(`${w || .6} w ${x1.toFixed(2)} ${(this.H - y1).toFixed(2)} m ${x2.toFixed(2)} ${(this.H - y2).toFixed(2)} l S`); };
+PdfDoc.prototype.rect = function (x, y, w, h, c) { this.col(c); this.ops.push(`${x.toFixed(2)} ${(this.H - y - h).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f`); };
+PdfDoc.prototype.para = function (s, x, width, o) { o = o || {}; const size = o.size || 9, lh = o.lh || size * 1.35;
+  const words = String(s).split(/\s+/); let line = '';
+  const flush = () => { if (!line) return; this.space(lh); this.text(line, x, this.y + size, o); this.y += lh; line = ''; };
+  words.forEach(w => { const t = line ? line + ' ' + w : w; if (tw(t, size, o.bold) > width) { flush(); line = w; } else line = t; });
+  flush(); };
+PdfDoc.prototype.table = function (cols, rows, o) {
+  o = o || {}; const size = o.size || 7.4, pad = 3.2, rh = o.rh || size * 1.62;
+  const x0 = this.M, total = cols.reduce((s, c) => s + c.w, 0);
+  const head = () => {
+    this.space(rh * 2.2);
+    this.line(x0, this.y, x0 + total, this.y, 1.2, INK); this.y += 2;
+    let x = x0; cols.forEach(c => { const tx = c.a === 'r' ? x + c.w - pad : c.a === 'c' ? x + c.w / 2 : x + pad;
+      this.text(c.t, tx, this.y + size, { size: size, bold: true, align: c.a === 'r' ? 'r' : c.a === 'c' ? 'c' : 'l' }); x += c.w; });
+    this.y += rh; this.line(x0, this.y, x0 + total, this.y, .8, INK); this.y += 1.5;
+  };
+  if (o.title) { this.space(14); this.text(o.title, x0, this.y + 8.5, { size: 8.6, bold: true }); this.y += 13; }
+  head();
+  rows.forEach(r => {
+    if (this.y + rh > this.H - this.M - 18) { this.newPage(); head(); }
+    let x = x0; const bold = r.bold;
+    (r.c || r).forEach((cell, i) => { const c = cols[i]; if (!c) return;
+      const tx = c.a === 'r' ? x + c.w - pad : c.a === 'c' ? x + c.w / 2 : x + pad + (r.ind || 0) * (i === 0 ? 7 : 0);
+      let txt = String(cell == null ? '' : cell);
+      if (c.a !== 'r' && tw(txt, size, bold) > c.w - pad * 2) { while (txt.length > 4 && tw(txt + '...', size, bold) > c.w - pad * 2) txt = txt.slice(0, -1); txt += '...'; }
+      this.text(txt, tx, this.y + size, { size, bold, align: c.a === 'r' ? 'r' : c.a === 'c' ? 'c' : 'l', color: r.color || (bold ? INK : GREY) }); x += c.w; });
+    this.y += rh;
+  });
+  this.line(x0, this.y, x0 + total, this.y, 1.2, INK); this.y += 4;
+  if (o.notes) o.notes.forEach(n => { this.para(n, x0, total, { size: 6.6, color: GREY }); });
+  this.y += 8;
+};
+PdfDoc.prototype.h2 = function (t) { this.space(26); this.y += 8; this.text(t, this.M, this.y + 11, { size: 13, bold: true }); this.y += 15; this.line(this.M, this.y, this.M + 60, this.y, 2, ACC); this.y += 10; };
+PdfDoc.prototype.build = function (meta) {
+  const n = this.pages.length;
+  const chunks = []; const objs = []; let out = '%PDF-1.4\n';
+  const add = s => { objs.push(out.length); out += s; };
+  const nPages = n;
+  // 1 catalog, 2 pages, 3..: page objs, then contents, then fonts
+  const pageIds = []; for (let i = 0; i < n; i++) pageIds.push(3 + i * 2);
+  add(`1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n`);
+  add(`2 0 obj\n<< /Type /Pages /Count ${n} /Kids [${pageIds.map(i => i + ' 0 R').join(' ')}] >>\nendobj\n`);
+  const fontId = 3 + n * 2;
+  this.pages.forEach((ops, i) => {
+    const id = 3 + i * 2;
+    // rodapé
+    const foot = [];
+    const fy = this.H - this.M + 10;
+    foot.push(`${LIGHT.join(' ')} RG .6 w ${this.M} ${(this.H - fy + 8).toFixed(2)} m ${(this.W - this.M).toFixed(2)} ${(this.H - fy + 8).toFixed(2)} l S`);
+    foot.push(`${GREY.join(' ')} rg BT /F1 6.6 Tf 1 0 0 1 ${this.M} ${(this.H - fy).toFixed(2)} Tm (${pesc(meta.foot)}) Tj ET`);
+    const pg = `${i + 1} / ${n}`;
+    foot.push(`${GREY.join(' ')} rg BT /F1 6.6 Tf 1 0 0 1 ${(this.W - this.M - tw(pg, 6.6)).toFixed(2)} ${(this.H - fy).toFixed(2)} Tm (${pesc(pg)}) Tj ET`);
+    const stream = ops.concat(foot).join('\n');
+    add(`${id} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${this.W} ${this.H}] /Resources << /Font << /F1 ${fontId} 0 R /F2 ${fontId + 1} 0 R >> >> /Contents ${id + 1} 0 R >>\nendobj\n`);
+    add(`${id + 1} 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`);
+  });
+  add(`${fontId} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n`);
+  add(`${fontId + 1} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\nendobj\n`);
+  const info = objs.length + 1;
+  add(`${info} 0 obj\n<< /Title (${pesc(meta.title)}) /Author (${pesc(meta.author)}) /Creator (Analisador DFP) >>\nendobj\n`);
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + objs.map(o => String(o).padStart(10, '0') + ' 00000 n \n').join('');
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R /Info ${info} 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  const bytes = new Uint8Array(out.length); for (let i = 0; i < out.length; i++) bytes[i] = out.charCodeAt(i) & 0xFF;
+  return new Blob([bytes], { type: 'application/pdf' });
+};
+
+/* ===== Conteúdo dos relatórios ===== */
+function repRows(rows, c, base, ys, mode) {
+  return rows.map(([lab, fn, lv]) => {
+    const cells = [lab];
+    ys.forEach((y, k) => { const r = avAh(fn, c, y, base, mode);
+      cells.push(r.v == null ? '—' : NF0.format(r.v), r.av == null ? '—' : NF1.format(r.av));
+      if (!(k === ys.length - 1 && mode === 'enc')) cells.push(r.ah == null ? (mode === 'fix' && k === ys.length - 1 ? '100,0' : '—') : NF1.format(r.ah));
+    });
+    return { c: cells, bold: lv <= 1, ind: lv >= 3 ? 1 : 0 };
+  });
+}
+function stmtCols(ys, mode, first) {
+  const avail = 842 - 72, nAH = ys.length - (mode === 'enc' ? 1 : 0);
+  let va = 56, av = 29;
+  let others = ys.length * (va + av) + nAH * av;
+  if (first + others > avail) { const k = (avail - first) / others; va = Math.floor(va * k); av = Math.floor(av * k); others = ys.length * (va + av) + nAH * av; }
+  const cols = [{ t: 'Contas', w: avail - others, a: 'l' }];
+  ys.forEach((y, k) => { const last = k === ys.length - 1 && mode === 'enc';
+    cols.push({ t: y + ' VA', w: va, a: 'r' }, { t: 'AV', w: av, a: 'r' });
+    if (!last) cols.push({ t: 'AH', w: av, a: 'r' }); });
+  return cols;
+}
+function buildPDF(c, opts) {
+  const d = new PdfDoc(); const y = effYear(c); const ys = YEARS.filter(yy => has(c, yy)).slice(-5); const mode = S.ah;
+  const peers = peersOf(c, y);
+  // capa / cabeçalho
+  d.rect(0, 0, d.W, 76, [.957, .969, .957]);
+  d.text('Analisador de Demonstrações Contábeis — CVM/DFP', d.M, 26, { size: 8.5, bold: true, color: ACC });
+  d.text(c.n, d.M, 50, { size: 19, bold: true });
+  d.text(`CNPJ ${c.c}  ·  Código CVM ${c.v}  ·  Setor ${c.s}  ·  Exercício em análise ${y}  ·  Valores em R$ mil`, d.M, 66, { size: 8, color: GREY });
+  d.y = 96;
+  // resumo
+  d.h2('Resumo dos indicadores');
+  const res = MAIN.map(k => { const a = assess(c, y, k, peers.list); const t = trend(k, ind(c, y, k), ind(c, prevY(y), k));
+    return { c: [INDK[k].n + ' (' + k + ')', fmtInd(k, ind(c, y, k)), a ? fmtInd(k, a.med) : '—', a ? SIT[a.sev][0] : '—', t.s === 'na' ? '—' : t.t, INDK[k].t], color: a && a.sev === 3 ? RED : a && a.sev === 0 ? GREEN : null }; });
+  d.table([{ t: 'Índice', w: 230, a: 'l' }, { t: y, w: 70, a: 'r' }, { t: 'Mediana do setor', w: 86, a: 'r' }, { t: 'Situação', w: 70, a: 'l' }, { t: 'Frente a ' + prevY(y), w: 76, a: 'l' }, { t: 'Tipo', w: 140, a: 'l' }], res,
+    { title: `Tabela 1 – Indicadores econômico-financeiros, ${c.n} — ${y}`, notes: ['Fonte: elaboração própria com dados da CVM — Demonstrações Financeiras Padronizadas (DFP), demonstrações consolidadas.', 'Nota: mediana e situação calculadas frente às companhias do mesmo setor e tipo (' + peers.list.length + ' companhias).'] });
+  if (opts.bal) {
+    d.h2('Balanço Patrimonial padronizado');
+    d.table(stmtCols(ys, mode, 190), repRows(ROWS_A, c, (cc, yy) => V(cc, yy, 'AT'), ys, mode), { title: `Tabela 2 – Ativo, ${c.n} — ${ys[0]}–${ys[ys.length - 1]} (R$ mil; AV em %; AH em número-índice)`, notes: ['Fonte: elaboração própria com dados da CVM (DFP consolidadas).', 'Nota: AV = rubrica ÷ ativo total × 100; AH = valor do exercício ÷ valor-base × 100.'] });
+    d.table(stmtCols(ys, mode, 190), repRows(ROWS_P, c, (cc, yy) => V(cc, yy, 'PT'), ys, mode), { title: `Tabela 3 – Passivo e patrimônio líquido, ${c.n} — ${ys[0]}–${ys[ys.length - 1]} (R$ mil; AV em %; AH em número-índice)`, notes: ['Fonte: elaboração própria com dados da CVM (DFP consolidadas).'] });
+  }
+  if (opts.dre) {
+    d.h2('Demonstração do Resultado');
+    d.table(stmtCols(ys, mode, 230), repRows(ROWS_D, c, (cc, yy) => V(cc, yy, 'RL'), ys, mode), { title: `Tabela 4 – DRE padronizada, ${c.n} — ${ys[0]}–${ys[ys.length - 1]} (R$ mil; AV em %; AH em número-índice)`, notes: ['Fonte: elaboração própria com dados da CVM (DFP consolidadas).', 'Nota: AV calculada sobre a receita líquida.'] });
+  }
+  if (opts.ind) {
+    d.h2('Índices por grupo');
+    ['E', 'L', 'R', 'P'].forEach(G => { const keys = IND.filter(x => x.g === G).map(x => x.k);
+      d.table([{ t: 'Índice', w: 200, a: 'l' }, { t: 'Fórmula', w: 160, a: 'l' }].concat(ys.map(yy => ({ t: yy, w: 54, a: 'r' }))).concat([{ t: 'Tipo', w: 130, a: 'l' }]),
+        keys.map(k => ({ c: [INDK[k].n + ' (' + k + ')', INDK[k].f].concat(ys.map(yy => fmtIndNum(k, ind(c, yy, k)))).concat([INDK[k].t]) })),
+        { title: `Tabela ${G === 'E' ? 5 : G === 'L' ? 6 : G === 'R' ? 7 : 8} – ${GROUPS[G].slice(3)}, ${c.n} — ${ys[0]}–${ys[ys.length - 1]}`, notes: G === 'P' ? ['Nota: prazos médios estimados; a DFP não informa receita bruta nem compras.'] : null });
+    });
+  }
+  if (opts.pan) {
+    d.h2('Panorama e plano de ação');
+    const A = [...MAIN, 'PMRE', 'PMRV', 'PMPC', 'CF'].map(k => assess(c, y, k, peers.list)).filter(Boolean);
+    const foco = [...A].sort((a, b) => b.score - a.score).filter(x => x.sev >= 2).slice(0, 5);
+    const alvo = foco.length ? foco : [...A].sort((a, b) => b.score - a.score).slice(0, 3);
+    d.para(`Prioridades de ${y}: ${alvo.map(x => INDK[x.k].n + ' (' + x.k + ')').join(', ')}.`, d.M, d.W - 2 * d.M, { size: 9, color: INK });
+    d.y += 4;
+    alvo.forEach((x, i) => {
+      const m = metas(c, y, x.k, x.alvo); const P = PLAY[x.k];
+      d.space(60); d.text(`${i + 1}. ${INDK[x.k].n} (${x.k}) — ${SIT[x.sev][0]}`, d.M, d.y + 9, { size: 9.6, bold: true, color: x.sev === 3 ? RED : INK }); d.y += 13;
+      d.para(`${fmtInd(x.k, x.v)} contra mediana de ${fmtInd(x.k, x.med)} no setor; ${x.t.s === 'na' ? 'sem comparação com ' + prevY(y) : x.t.t + ' frente a ' + prevY(y)}. ${P.causas.length ? 'Causas usuais: ' + P.causas.join('; ') + '.' : ''}`, d.M, d.W - 2 * d.M, { size: 8, color: GREY });
+      d.para('Contas a trabalhar: ' + P.contas + '.', d.M, d.W - 2 * d.M, { size: 8, color: GREY });
+      if (m.length) d.para('Meta — alcançar a mediana do setor exigiria: ' + m.map(o => o[0].toLowerCase() + ' R$ ' + fmtBig(o[1])).join('; ') + '.', d.M, d.W - 2 * d.M, { size: 8, color: GREY });
+      d.para('Curto prazo: ' + P.cp.join(' ') , d.M, d.W - 2 * d.M, { size: 8, color: GREY });
+      d.para('Longo prazo: ' + P.lp.join(' '), d.M, d.W - 2 * d.M, { size: 8, color: GREY });
+      d.y += 6;
+    });
+    d.table([{ t: 'Prioridade', w: 46, a: 'l' }, { t: 'Índice', w: 172, a: 'l' }, { t: 'Meta', w: 92, a: 'l' }, { t: 'Movimento necessário', w: 164, a: 'l' }, { t: 'Contas afetadas', w: 296, a: 'l' }],
+      alvo.map((x, i) => { const m = metas(c, y, x.k, x.alvo); return { c: [(i + 1) + 'ª', INDK[x.k].n + ' (' + x.k + ')', fmtInd(x.k, x.v) + ' → ' + fmtInd(x.k, x.alvo), m.length ? m[0][0].toLowerCase() + ': R$ ' + fmtBig(m[0][1]) : '—', PLAY[x.k].contas] }; }),
+      { title: `Tabela 9 – Plano de ação por prioridade, ${c.n} — ${y}`, notes: ['Nota: metas calculadas pela diferença entre o valor da companhia e a mediana do setor, mantidas constantes as demais contas.'] });
+  }
+  return d.build({ title: 'Análise das demonstrações contábeis — ' + c.n, author: 'Analisador DFP', foot: `Analisador DFP · ${c.n} · exercício ${y} · Fonte: CVM (DFP consolidadas) · Metodologia: Análise das Demonstrações Contábeis, Prof. Saulo Cardoso Maia (DECAC/UFSJ) · Elaborado por Luiz Gabriel de Sousa (DCECO/UFSJ)` });
+}
+
+/* ===== Gerador de XLSX (sem dependências) ===== */
+const CRCT = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(buf) { let c = 0xFFFFFFFF; for (let i = 0; i < buf.length; i++) c = CRCT[(c ^ buf[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function zipStore(files) { // [{name, data:Uint8Array}]
+  const enc = new TextEncoder(); const parts = []; const central = []; let off = 0;
+  const u16 = v => [v & 255, (v >> 8) & 255], u32 = v => [v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >>> 24) & 255];
+  files.forEach(f => {
+    const name = enc.encode(f.name), data = f.data, crc = crc32(data);
+    const lh = [].concat([80, 75, 3, 4], u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(data.length), u32(data.length), u16(name.length), u16(0));
+    parts.push(new Uint8Array(lh), name, data);
+    central.push({ name, crc, len: data.length, off });
+    off += lh.length + name.length + data.length;
+  });
+  const cd = []; let cdLen = 0;
+  central.forEach(c => { const h = [].concat([80, 75, 1, 2], u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(c.crc), u32(c.len), u32(c.len), u16(c.name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(c.off));
+    cd.push(new Uint8Array(h), c.name); cdLen += h.length + c.name.length; });
+  const end = new Uint8Array([].concat([80, 75, 5, 6], u16(0), u16(0), u16(central.length), u16(central.length), u32(cdLen), u32(off), u16(0)));
+  return new Blob(parts.concat(cd, [end]), { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+const xesc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const colLetter = n => { let s = ''; n++; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - m - 1) / 26; } return s; };
+// estilos: 0 normal | 1 título | 2 subtítulo | 3 cabeçalho | 4 rótulo negrito | 5 número | 6 1 casa | 7 2 casas | 8 nota | 9 número negrito | 10 texto | 11 dias | 12 rótulo recuado
+const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="3"><numFmt numFmtId="164" formatCode="#,##0"/><numFmt numFmtId="165" formatCode="0.0"/><numFmt numFmtId="166" formatCode="0.00"/></numFmts>
+<fonts count="7">
+<font><sz val="10"/><name val="Calibri"/><color rgb="FF17231F"/></font>
+<font><b/><sz val="15"/><name val="Calibri"/><color rgb="FF17231F"/></font>
+<font><sz val="9"/><name val="Calibri"/><color rgb="FF5B6672"/></font>
+<font><b/><sz val="10"/><name val="Calibri"/><color rgb="FFFFFFFF"/></font>
+<font><b/><sz val="10"/><name val="Calibri"/><color rgb="FF17231F"/></font>
+<font><sz val="8"/><name val="Calibri"/><color rgb="FF5B6672"/></font>
+<font><b/><sz val="11"/><name val="Calibri"/><color rgb="FF1E5B4F"/></font>
+</fonts>
+<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E5B4F"/><bgColor indexed="64"/></patternFill></fill></fills>
+<borders count="4"><border><left/><right/><top/><bottom/><diagonal/></border>
+<border><left/><right/><top style="medium"><color rgb="FF17231F"/></top><bottom/><diagonal/></border>
+<border><left/><right/><top/><bottom style="thin"><color rgb="FF17231F"/></bottom><diagonal/></border>
+<border><left/><right/><top/><bottom style="medium"><color rgb="FF17231F"/></bottom><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="14">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="3" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="5" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>
+<xf numFmtId="164" fontId="4" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>
+<xf numFmtId="165" fontId="4" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="6" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="3" xfId="0"/>
+</cellXfs></styleSheet>`;
+function sheetXML(sh) {
+  const rows = sh.rows.map((r, ri) => {
+    const cells = (r || []).map((cell, ci) => {
+      if (cell == null || cell === '') return '';
+      const ref = colLetter(ci) + (ri + 1); const s = cell.s || 0;
+      if (typeof cell === 'object' && cell.n != null) return `<c r="${ref}" s="${s}"><v>${cell.n}</v></c>`;
+      const t = typeof cell === 'object' ? cell.t : cell;
+      return `<c r="${ref}" s="${s}" t="inlineStr"><is><t xml:space="preserve">${xesc(t)}</t></is></c>`;
+    }).join('');
+    return `<row r="${ri + 1}"${r && r.h ? ` ht="${r.h}" customHeight="1"` : ''}>${cells}</row>`;
+  }).join('');
+  const cols = sh.widths ? `<cols>${sh.widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>` : '';
+  const pane = sh.freeze ? `<sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ySplit="${sh.freeze}" topLeftCell="A${sh.freeze + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>` : `<sheetViews><sheetView workbookViewId="0" showGridLines="0"/></sheetViews>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${pane}${cols}<sheetData>${rows}</sheetData></worksheet>`;
+}
+function buildXLSX(sheets, title) {
+  const enc = new TextEncoder(); const files = [];
+  const F = (name, str) => files.push({ name, data: enc.encode(str) });
+  F('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`);
+  F('_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`);
+  F('xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xesc(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>`);
+  F('xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`);
+  F('xl/styles.xml', STYLES_XML);
+  sheets.forEach((s, i) => F(`xl/worksheets/sheet${i + 1}.xml`, sheetXML(s)));
+  return zipStore(files);
+}
+const N = (v, s) => v == null || !isFinite(v) ? { t: '—', s: 0 } : { n: +(+v).toFixed(4), s: s };
+function xlsxReport(c, opts) {
+  const y = effYear(c); const ys = YEARS.filter(yy => has(c, yy)); const mode = S.ah; const peers = peersOf(c, y);
+  const SRCX = 'Fonte: elaboração própria com dados da CVM — Demonstrações Financeiras Padronizadas (DFP), demonstrações consolidadas.';
+  const head = (t, sub) => [[{ t, s: 1 }], [{ t: sub, s: 2 }], []];
+  const sheets = [];
+  // Resumo
+  const r1 = head('Análise das demonstrações contábeis', `${c.n} · CNPJ ${c.c} · ${c.s} · exercício ${y} · valores em R$ mil`);
+  r1.push([{ t: `Tabela 1 – Indicadores econômico-financeiros, ${c.n} — ${y}`, s: 4 }]);
+  r1.push([{ t: 'Índice', s: 3 }, { t: y, s: 3 }, { t: 'Mediana do setor', s: 3 }, { t: 'Situação', s: 3 }, { t: 'Frente a ' + prevY(y), s: 3 }, { t: 'Tipo', s: 3 }]);
+  MAIN.concat(['PMRE', 'PMRV', 'PMPC', 'CF']).forEach(k => { const a = assess(c, y, k, peers.list); const t = trend(k, ind(c, y, k), ind(c, prevY(y), k)); const st = INDK[k].u === '%' ? 6 : INDK[k].u === 'd' ? 5 : 7;
+    r1.push([{ t: INDK[k].n + ' (' + k + ')' }, N(ind(c, y, k), st), N(a ? a.med : null, st), { t: a ? SIT[a.sev][0] : '—' }, { t: t.s === 'na' ? '—' : t.t }, { t: INDK[k].t }]); });
+  r1.push([], [{ t: SRCX, s: 8 }], [{ t: `Nota: mediana e situação frente a ${peers.list.length} companhias do mesmo setor e tipo. Unidades: % para índices de estrutura e rentabilidade, vezes para liquidez e giro, dias para prazos.`, s: 8 }]);
+  sheets.push({ name: 'Resumo', rows: r1, widths: [40, 12, 18, 12, 16, 26], freeze: 5 });
+  // Balanço e DRE
+  const stmt = (nome, rows, base, tab, uni) => {
+    const rr = head('Análise das demonstrações contábeis', `${c.n} · exercício ${y}`);
+    rr.push([{ t: `${tab} ${nome}, ${c.n} — ${ys[0]}–${ys[ys.length - 1]} (R$ mil; AV em %; AH em número-índice)`, s: 4 }]);
+    const h1 = [{ t: 'Contas', s: 3 }]; ys.forEach((yy, k) => { h1.push({ t: yy + ' VA', s: 3 }, { t: yy + ' AV', s: 3 }); if (!(k === ys.length - 1 && mode === 'enc')) h1.push({ t: yy + ' AH', s: 3 }); });
+    rr.push(h1);
+    rows.forEach(([lab, fn, lv]) => { const line = [{ t: (lv >= 3 ? '    ' : '') + lab, s: lv <= 1 ? 4 : 0 }];
+      ys.forEach((yy, k) => { const r = avAh(fn, c, yy, base, mode); line.push(N(r.v, lv <= 1 ? 9 : 5), N(r.av, 6)); if (!(k === ys.length - 1 && mode === 'enc')) line.push(N(r.ah, 6)); });
+      rr.push(line); });
+    rr.push([], [{ t: SRCX, s: 8 }], [{ t: uni, s: 8 }]);
+    return { name: nome.slice(0, 28), rows: rr, widths: [38].concat(ys.flatMap((yy, k) => (k === ys.length - 1 && mode === 'enc') ? [14, 9] : [14, 9, 9])), freeze: 5 };
+  };
+  if (opts.bal) { sheets.push(stmt('Balanço Ativo', ROWS_A, (cc, yy) => V(cc, yy, 'AT'), 'Tabela 2 –', 'Nota: AV = rubrica ÷ ativo total × 100; AH = valor do exercício ÷ valor-base × 100.'));
+    sheets.push(stmt('Balanço Passivo', ROWS_P, (cc, yy) => V(cc, yy, 'PT'), 'Tabela 3 –', 'Nota: AV calculada sobre o total do passivo + patrimônio líquido.')); }
+  if (opts.dre) sheets.push(stmt('DRE', ROWS_D, (cc, yy) => V(cc, yy, 'RL'), 'Tabela 4 –', 'Nota: AV calculada sobre a receita líquida.'));
+  if (opts.ind) {
+    const ri = head('Índices econômico-financeiros', `${c.n} · ${ys[0]}–${ys[ys.length - 1]}`);
+    ri.push([{ t: `Tabela 5 – Índices por grupo, ${c.n} — ${ys[0]}–${ys[ys.length - 1]}`, s: 4 }]);
+    ri.push([{ t: 'Índice', s: 3 }, { t: 'Fórmula', s: 3 }].concat(ys.map(yy => ({ t: yy, s: 3 }))).concat([{ t: 'Tipo', s: 3 }, { t: 'Unidade', s: 3 }]));
+    ['E', 'L', 'R', 'P'].forEach(G => { ri.push([{ t: GROUPS[G], s: 12 }]);
+      IND.filter(x => x.g === G).forEach(x => { const st = x.u === '%' ? 6 : x.u === 'd' ? 5 : 7;
+        ri.push([{ t: x.n + ' (' + x.k + ')' }, { t: x.f }].concat(ys.map(yy => N(ind(c, yy, x.k), st))).concat([{ t: x.t }, { t: x.u === '%' ? '%' : x.u === 'd' ? 'dias' : 'vezes' }])); }); });
+    ri.push([], [{ t: SRCX, s: 8 }], [{ t: 'Nota: ATm = (ativo final + ativo inicial) ÷ 2; PLma = (PL inicial + PL final − lucro líquido) ÷ 2; prazos médios estimados.', s: 8 }]);
+    sheets.push({ name: 'Índices', rows: ri, widths: [38, 26].concat(ys.map(() => 11)).concat([24, 10]), freeze: 5 });
+  }
+  if (opts.pan) {
+    const A = [...MAIN, 'PMRE', 'PMRV', 'PMPC', 'CF'].map(k => assess(c, y, k, peers.list)).filter(Boolean);
+    const ord = [...A].sort((a, b) => b.score - a.score); const foco = ord.filter(x => x.sev >= 2).slice(0, 5); const alvo = foco.length ? foco : ord.slice(0, 3);
+    const rp = head('Panorama e plano de ação', `${c.n} · exercício ${y}`);
+    rp.push([{ t: `Tabela 6 – Diagnóstico por índice em relação ao setor, ${c.n} — ${y}`, s: 4 }]);
+    rp.push([{ t: 'Índice', s: 3 }, { t: 'Companhia', s: 3 }, { t: 'Mediana', s: 3 }, { t: 'Q1', s: 3 }, { t: 'Q3', s: 3 }, { t: 'Percentil', s: 3 }, { t: 'Variação', s: 3 }, { t: 'Situação', s: 3 }]);
+    A.forEach(x => { const st = INDK[x.k].u === '%' ? 6 : INDK[x.k].u === 'd' ? 5 : 7;
+      rp.push([{ t: INDK[x.k].n + ' (' + x.k + ')' }, N(x.v, st), N(x.med, st), N(x.q1, st), N(x.q3, st), N(x.pctl, 5), { t: x.t.s === 'na' ? '—' : x.t.t }, { t: SIT[x.sev][0] }]); });
+    rp.push([], [{ t: `Tabela 7 – Plano de ação por prioridade, ${c.n} — ${y}`, s: 4 }]);
+    rp.push([{ t: 'Prioridade', s: 3 }, { t: 'Índice', s: 3 }, { t: 'Meta', s: 3 }, { t: 'Movimento necessário (R$ mil)', s: 3 }, { t: 'Primeira ação', s: 3 }, { t: 'Contas afetadas', s: 3 }]);
+    alvo.forEach((x, i) => { const m = metas(c, y, x.k, x.alvo);
+      rp.push([{ t: (i + 1) + 'ª' }, { t: INDK[x.k].n + ' (' + x.k + ')' }, { t: fmtInd(x.k, x.v) + ' → ' + fmtInd(x.k, x.alvo) }, m.length ? { t: m[0][0] + ': ' + NF0.format(Math.round(m[0][1])), s: 10 } : { t: '—' }, { t: PLAY[x.k].cp[0], s: 10 }, { t: PLAY[x.k].contas, s: 10 }]); });
+    rp.push([], [{ t: SRCX, s: 8 }], [{ t: 'Nota: metas calculadas pela diferença entre o valor da companhia e a mediana do setor, mantidas constantes as demais contas.', s: 8 }]);
+    sheets.push({ name: 'Panorama', rows: rp, widths: [40, 13, 13, 11, 11, 11, 13, 13], freeze: 5 });
+  }
+  if (opts.dados) {
+    const rd = head('Base padronizada', `${c.n} · valores em R$ mil`);
+    rd.push([{ t: 'Rubrica', s: 3 }, { t: 'Campo', s: 3 }].concat(ys.map(yy => ({ t: yy, s: 3 }))));
+    const labels = {}; [...ROWS_A, ...ROWS_P, ...ROWS_D].forEach(([lab, fn, lv, code]) => { });
+    FLD.forEach(f => rd.push([{ t: f }, { t: f }].concat(ys.map(yy => N(V(c, yy, f), 5)))));
+    rd.push([], [{ t: SRCX, s: 8 }]);
+    sheets.push({ name: 'Dados', rows: rd, widths: [16, 16].concat(ys.map(() => 14)), freeze: 5 });
+  }
+  return buildXLSX(sheets, c.n);
+}
+
+/* ===== Aba Exportar ===== */
+const EXP = { bal: true, dre: true, ind: true, pan: true, dados: false };
+function renderExportar() {
+  const c = cur(); const y = effYear(c); const el = $('#v-exportar'); const ys = YEARS.filter(yy => has(c, yy));
+  const opt = (k, lab) => `<label class="ctl"><input type="checkbox" data-opt="${k}" ${EXP[k] ? 'checked' : ''}> ${lab}</label>`;
+  el.innerHTML = `<h1>Exportar</h1><p class="lede">Gere o relatório completo da companhia selecionada em PDF, pronto para imprimir ou anexar, ou em planilha .xlsx, com os números já formatados para continuar a análise. Os dois arquivos seguem o layout do site e são montados no seu navegador.</p>
+  <div class="panel"><h3>${esc(c.n)}</h3><p class="muted" style="margin-top:0">Exercício em análise ${y} · exercícios no relatório: ${ys.join(', ')} · Análise Horizontal: ${S.ah === 'enc' ? 'ano a ano' : 'base fixa'} (altere na aba Balanço)</p>
+  <div class="toolbar">${opt('bal', 'Balanço Patrimonial')}${opt('dre', 'DRE')}${opt('ind', 'Índices')}${opt('pan', 'Panorama e plano de ação')}${opt('dados', 'Base padronizada (só no Excel)')}</div>
+  <div class="toolbar"><button class="btn" id="bpdf">Baixar PDF</button><button class="btn" id="bxls">Baixar Excel (.xlsx)</button><span class="muted" id="expmsg"></span></div></div>
+  <div class="grid2" style="margin-top:22px"><div class="panel"><h3>O que vem no PDF</h3><ul><li>Cabeçalho com identificação da companhia e do exercício;</li><li>resumo dos indicadores com a mediana do setor e a situação de cada um;</li><li>Balanço e DRE padronizados com VA, AV e AH;</li><li>índices por grupo, com fórmula e tipo;</li><li>panorama com prioridades, metas e plano de ação;</li><li>rodapé com fonte, metodologia e numeração de páginas.</li></ul><p class="muted" style="font-size:13px">Formato A4 paisagem, em tipografia e cores do site.</p></div>
+  <div class="panel"><h3>O que vem no Excel</h3><ul><li>Uma aba para cada bloco: Resumo, Balanço Ativo, Balanço Passivo, DRE, Índices e Panorama;</li><li>valores como número, com formatos de milhar, percentual e dias já aplicados;</li><li>cabeçalhos fixos ao rolar e larguras de coluna ajustadas;</li><li>fonte e notas no rodapé de cada aba, no padrão das tabelas do site;</li><li>opcionalmente, a aba Dados com a base padronizada para seus próprios cálculos.</li></ul></div></div>
+  ${srcBlock(['Os arquivos são gerados no navegador, sem envio de dados. O conteúdo reflete a companhia e o exercício selecionados no topo da página.'])}`;
+  $$('[data-opt]', el).forEach(b => b.onchange = () => { EXP[b.dataset.opt] = b.checked; });
+  const msg = $('#expmsg', el);
+  $('#bpdf', el).onclick = () => { msg.textContent = 'Gerando PDF…'; setTimeout(() => { try { dl(buildPDF(c, EXP), `analise-${slug(c.n)}-${y}.pdf`); msg.textContent = 'PDF gerado.'; } catch (e) { msg.textContent = 'Erro ao gerar o PDF: ' + e.message; } }, 30); };
+  $('#bxls', el).onclick = () => { msg.textContent = 'Gerando planilha…'; setTimeout(() => { try { dl(xlsxReport(c, EXP), `analise-${slug(c.n)}-${y}.xlsx`); msg.textContent = 'Planilha gerada.'; } catch (e) { msg.textContent = 'Erro ao gerar a planilha: ' + e.message; } }, 30); };
+}
+
 /* ===== Estudar: quiz no estilo Kahoot ===== */
 const SHAPES = ['<svg viewBox="0 0 24 24"><path d="M12 3 22 20H2z" fill="#fff"/></svg>', '<svg viewBox="0 0 24 24"><path d="M12 2 22 12 12 22 2 12z" fill="#fff"/></svg>', '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="#fff"/></svg>', '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" fill="#fff"/></svg>'];
 const rnd = n => Math.floor(Math.random() * n);
@@ -1139,19 +1640,20 @@ function renderMetodo() {
   const el = $('#v-metodo'); if (el.dataset.ok) return; el.dataset.ok = 1;
   const codeTable = (rows, n, t) => `<div class="tw"><table class="ibge codes"><caption>Quadro ${n} – ${t}</caption><thead><tr><th>Item da demonstração</th><th style="text-align:left">Código(s) das contas CVM</th></tr></thead><tbody>${rows.map(([l, , lv, cd]) => `<tr class="lv${lv}"><td>${esc(l)}</td><td class="l">${esc(cd || '(soma das rubricas abaixo)')}</td></tr>`).join('')}</tbody></table></div>`;
   el.innerHTML = `<div class="method"><h1>Como funciona</h1><p class="lede">Sistema de análise das demonstrações contábeis de companhias abertas, desenvolvido para a Atividade Avaliativa de Administração Financeira (DECAC/UFSJ) a partir da planilha “Analisador de Demonstrações Contábeis — CVM”.</p>
-  <h3>Como usar</h3><ol><li>Digite parte do nome ou do CNPJ no campo de busca do topo (ex.: <code>energia</code>, <code>banco</code>, <code>33.000.167</code>). A busca ignora acentos e maiúsculas e reconhece a abreviação BCO como “banco”.</li><li>Escolha o exercício em análise (2021 a 2025). Todas as abas se atualizam automaticamente: o sistema é reutilizável, basta trocar a companhia.</li><li>Navegue pelas abas: Painel, Balanço, DRE, Índices, Ficha, Panorama, Comparar, Rankings e Quiz.</li></ol>
-  <h3>Fluxo do sistema</h3><p><b>Input:</b> arquivos DFP da CVM (BPA, BPP e DRE consolidados) e o nome da companhia. <b>Processamento:</b> filtragem pela companhia, padronização das contas pelos códigos CVM do Tópico 2 e cálculo dos índices. <b>Output:</b> AV e AH do balanço e da DRE; índices de estrutura de capital, liquidez e desempenho; panorama com diagnóstico e plano de ação; comparações, rankings e questões de estudo.</p>
+  <h3>Como usar</h3><ol><li>Digite parte do nome ou do CNPJ no campo de busca do topo (ex.: <code>energia</code>, <code>banco</code>, <code>33.000.167</code>). A busca ignora acentos e maiúsculas e reconhece a abreviação BCO como “banco”.</li><li>Escolha o exercício em análise (2021 a 2025). Todas as abas se atualizam automaticamente: o sistema é reutilizável, basta trocar a companhia.</li><li>Navegue pelas abas: Painel, Balanço, DRE, Índices, Ficha, Panorama, Comparar, Rankings e Quiz. Em Importar, envie arquivos da CVM ou demonstrações próprias; em Exportar, baixe o relatório em PDF ou planilha.</li></ol>
+  <h3>Fluxo do sistema</h3><p><b>Input:</b> arquivos DFP da CVM (BPA, BPP e DRE consolidados) e o nome da companhia. <b>Processamento:</b> filtragem pela companhia, padronização das contas pelos códigos CVM do Tópico 2 e cálculo dos índices. <b>Output:</b> AV e AH do balanço e da DRE; índices de estrutura de capital, liquidez e desempenho; panorama com diagnóstico e plano de ação; comparações, rankings e questões de estudo; e relatório em PDF ou .xlsx.</p>
   <h3>Fonte e tratamento dos dados</h3><ul><li>CVM, Portal de Dados Abertos — Demonstrações Financeiras Padronizadas (DFP), arquivos <code>BPA_con</code>, <code>BPP_con</code> e <code>DRE_con</code> de 2021 a 2024, usando a coluna do exercício mais recente (ÚLTIMO) e a versão mais recente de cada documento.</li><li>Exercício de 2025: base tratada da planilha “Analisador de Demonstrações Contábeis — CVM” (DFP 2025).</li><li>Exercício de 2020: usado apenas como saldo inicial para médias (ATm, PLma, estoques, clientes e fornecedores médios) de 2021.</li><li>Valores convertidos para R$ mil. Companhias que declararam escala UNIDADE com ativo total inferior a R$ 5 milhões tiveram a escala ajustada para MIL, como na planilha original.</li><li>A base reúne ${CO.length} companhias. Setores: classificação setorial da B3 quando disponível; nos demais casos, inferência por palavras-chave da denominação (sinalizada na ficha).</li></ul>
   <h3>Padronização das demonstrações (Tópico 2, slides 6 a 8)</h3>${codeTable(ROWS_A, 2, 'Relação de contas do Ativo — códigos CVM')}${codeTable(ROWS_P, 3, 'Relação de contas do Passivo e PL — códigos CVM')}${codeTable(ROWS_D, 4, 'Relação de contas da DRE — códigos CVM')}
   <div class="src"><p>Fonte: Tópico 2 — Análise das Demonstrações Financeiras (Prof. Saulo Cardoso Maia, DECAC/UFSJ), adaptado ao plano de contas da CVM.</p><p>Nota: rubricas residuais (“Outros”, “Outras obrigações”, “Outras contas do PL”) são obtidas por diferença em relação ao subtotal, de modo que cada tabela fecha com o total.</p></div>
   <h3>Fórmulas</h3><ul><li>AV = (Rubrica ÷ Base) × 100 — base: Ativo Total no balanço e Receita Líquida na DRE.</li><li>AH = (Valor em T+n ÷ Valor na base T) × 100 — na opção “ano a ano”, a base é o exercício anterior; na opção “base fixa”, o primeiro exercício disponível.</li>
   ${IND.map(x => `<li><b>${x.n} (${x.k}):</b> ${x.f} — ${x.t.toLowerCase()}.</li>`).join('')}
   <li>Tendência: β da regressão linear do índice contra o tempo (β &lt; 0 queda; β &gt; 0 alta; β ≅ 0 ausência de tendência, quando |β| &lt; 3% da média).</li><li>Melhora/piora: comparação com o exercício anterior segundo o tipo do índice; variação de até 2% é estabilidade.</li></ul>
+  <h3>Importar e exportar</h3><ul><li>A aba Importar aceita CSV: os arquivos BPA, BPP e DRE da CVM (DFP ou ITR, consolidados ou individuais), que são combinados por companhia e exercício, e um modelo simplificado para demonstrações próprias, com o código da conta na primeira coluna e um exercício por coluna. Arquivos .zip precisam ser descompactados antes.</li><li>A leitura acontece no navegador; nada é enviado a servidor. As companhias importadas valem para a sessão e aparecem sob o setor “Importadas”.</li><li>A aba Exportar gera o relatório em PDF (A4 paisagem) e em planilha .xlsx, ambos montados no navegador, com as tabelas no padrão das do site.</li></ul>
   <h3>Limitações</h3><ul><li>Bancos, seguradoras e operadoras de saúde seguem plano de contas próprio: estoques, fornecedores e receita de vendas não têm correspondência direta, e índices de liquidez e giro perdem parte do significado.</li><li>Índices que dividem por PL negativo, receita nula ou passivo nulo não são exibidos (—).</li><li>Os prazos médios são estimativas: a DFP não traz receita bruta nem compras.</li><li>Restatements: valores de um exercício vêm da DFP daquele ano; reapresentações posteriores podem diferir levemente.</li></ul></div>`;
 }
 
 /* ===== Navegação ===== */
-const TABS = [['painel', 'Painel', renderPainel], ['balanco', 'Balanço', renderBalanco], ['dre', 'DRE', renderDRE], ['indices', 'Índices', renderIndices], ['ficha', 'Ficha da companhia', renderFicha], ['panorama', 'Panorama', renderPanorama], ['comparar', 'Comparar', renderComparar], ['rankings', 'Rankings setoriais', renderRankings], ['estudar', 'Quiz', renderEstudar], ['metodo', 'Como funciona', renderMetodo]];
+const TABS = [['painel', 'Painel', renderPainel], ['balanco', 'Balanço', renderBalanco], ['dre', 'DRE', renderDRE], ['indices', 'Índices', renderIndices], ['ficha', 'Ficha da companhia', renderFicha], ['panorama', 'Panorama', renderPanorama], ['comparar', 'Comparar', renderComparar], ['rankings', 'Rankings setoriais', renderRankings], ['estudar', 'Quiz', renderEstudar], ['importar', 'Importar', renderImportar], ['exportar', 'Exportar', renderExportar], ['metodo', 'Como funciona', renderMetodo]];
 function go(t) { S.tab = t; $$('nav.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.t === t)); $$('section.view').forEach(s => s.classList.toggle('on', s.id === 'v-' + t)); renderAll(); window.scrollTo({ top: 0 }); try { history.replaceState(null, '', '#' + t); } catch (e) { } }
 function renderAll() { const t = TABS.find(x => x[0] === S.tab); t[2](); }
 function init() {
